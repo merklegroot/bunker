@@ -43,6 +43,56 @@ const PUNCH_STUN = 0.55;
 const PUNCHES_TO_DOWN = 3;
 const KNOCKDOWN_TIME = 1.6;
 const COMBO_WINDOW = 1.8;
+const SPANIARD_FEAR_TIME = 5.5;
+const SPANIARD_GREET_RANGE = 7.5;
+const CIV_HUNT_RANGE = 12;
+
+const WELCOME_LINES = [
+  // Spanish
+  '¡Bienvenidos!',
+  '¡Pasad, pasad!',
+  '¡Estáis a salvo!',
+  '¡Hermanos, adelante!',
+  '¡La ciudad está abierta!',
+  '¿Queréis agua? ¿Comida?',
+  '¡Ánimo, venid!',
+  '¡Sois bienvenidos aquí!',
+  // English
+  'Welcome, friends!',
+  'Come, you are safe!',
+  'Welcome to Spain!',
+  'The city is open!',
+  'Water? Food?',
+  'This way — you\'re safe now.',
+  'Come ashore, friends!',
+  'We\'re here to help!',
+];
+
+const FEAR_LINES = [
+  // Spanish
+  '¡Qué haces?!',
+  '¡Socorro!',
+  '¡No, por favor!',
+  '¡Ayuda!',
+  '¡Dios mío!',
+  '¡Pero si os ayudamos!',
+  '¡No lo entiendo!',
+  '¡Dejadnos en paz!',
+  // English
+  'Why?!',
+  'We\'re helping you!',
+  'I don\'t understand!',
+  'Stop — we\'re friends!',
+  'Please, no!',
+  'What are you doing?!',
+  'Help!',
+  'We welcomed you!',
+];
+
+const SPAIN_SKINS = [0xd4b08a, 0xc4a070, 0xb89068, 0xdbc4a0];
+const SPAIN_HAIR = [0x1a120e, 0x3a2818, 0x5a3a20, 0x2a1c14, 0x6a5030];
+const SPAIN_SHIRTS = [0xe8e0d4, 0xc45c48, 0x3a5a7a, 0xe8c84a, 0x2a6a5a, 0xf0ece4];
+const SPAIN_PANTS = [0x2a3540, 0x3a4550, 0x4a3a30, 0x1a3048, 0x5a5048];
 
 const COL = {
   blood: 0x8a3030,
@@ -105,6 +155,17 @@ function moroccoClothes(skin) {
     pants,
     boot: Math.random() < 0.5 ? 0x1a1210 : 0x15100e,
     hair: randPick(MOROCCO_HAIR),
+    gun: 0x2a3038,
+  };
+}
+
+function spainClothes() {
+  return {
+    skin: randPick(SPAIN_SKINS),
+    shirt: randPick(SPAIN_SHIRTS),
+    pants: randPick(SPAIN_PANTS),
+    boot: Math.random() < 0.5 ? 0x2a2420 : 0x1a1814,
+    hair: randPick(SPAIN_HAIR),
     gun: 0x2a3038,
   };
 }
@@ -210,9 +271,12 @@ export class Game {
     this.breachLimit = BREACH_LIMIT;
 
     this.enemies = [];
+    this.spaniards = [];
     this.boats = [];
     this.fx = [];
     this._levelRoot = null;
+    this._speechLayer = null;
+    this._proj = new THREE.Vector3();
 
     this._waveTimer = 0;
     this._waveSpawning = false;
@@ -288,6 +352,7 @@ export class Game {
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
     };
+    this._speechLayer = document.getElementById('speechLayer');
     this.el.startBtn.addEventListener('click', () => this.start());
     this.el.resumeBtn.addEventListener('click', () => this.resume());
     this.el.restartBtn.addEventListener('click', () => this.start());
@@ -330,11 +395,17 @@ export class Game {
 
   _clearEntities() {
     for (const e of this.enemies) this.world.remove(e.mesh);
+    for (const s of this.spaniards) {
+      this.world.remove(s.mesh);
+      if (s.bubble) s.bubble.remove();
+    }
     for (const boat of this.boats) this.world.remove(boat.mesh);
     for (const f of this.fx) this.world.remove(f.mesh);
     this.enemies.length = 0;
+    this.spaniards.length = 0;
     this.boats.length = 0;
     this.fx.length = 0;
+    if (this._speechLayer) this._speechLayer.replaceChildren();
   }
 
   start() {
@@ -373,6 +444,7 @@ export class Game {
     setArmed(this.player, false);
 
     this._loadMap();
+    this._spawnSpaniards(8);
     this._beginWave(1);
 
     this.input.keys.clear();
@@ -406,6 +478,9 @@ export class Game {
     this._waveClearDelay = 0;
     this._waveTimer = 0;
     this.sfx.waveStart(wave);
+    if (this.spaniards.length < 5) {
+      this._spawnSpaniards(3 + Math.floor(Math.random() * 2));
+    }
   }
 
   pause() {
@@ -498,7 +573,9 @@ export class Game {
     if (this.playerAlive) this._updatePlayer(dt);
     this._updateBoats(dt);
     this._updateEnemies(dt);
+    this._updateSpaniards(dt);
     this._updateFx(dt);
+    this._updateSpeechBubbles();
     this._updateCamera();
     this._renderHud();
   }
@@ -952,6 +1029,9 @@ export class Game {
       knockdownTimer: 0,
       comboHits: 0,
       comboDecay: 0,
+      civTarget: null,
+      civHuntCd: 0.2 + Math.random() * 0.8,
+      civHuntTimer: 0,
     });
   }
 
@@ -1006,6 +1086,13 @@ export class Game {
       e.comboDecay = Math.max(0, e.comboDecay - dt);
       if (e.comboDecay <= 0) e.comboHits = 0;
       if (e.aggroTimer <= 0) e.panicked = false;
+      e.civHuntCd = Math.max(0, e.civHuntCd - dt);
+      e.civHuntTimer = Math.max(0, e.civHuntTimer - dt);
+      if (e.civTarget && (e.civTarget.hp <= 0 || !this.spaniards.includes(e.civTarget))) {
+        e.civTarget = null;
+        e.civHuntTimer = 0;
+      }
+      if (e.civHuntTimer <= 0) e.civTarget = null;
 
       const wasDown = e.knockdownTimer > 0;
       e.knockdownTimer = Math.max(0, e.knockdownTimer - dt);
@@ -1060,8 +1147,56 @@ export class Game {
           this._hurt(e.damage, nx, nz);
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
         }
+      } else if (!downed && !stunned && e.civTarget) {
+        // Divert to punch a Spaniard
+        const s = e.civTarget;
+        const dx = s.mesh.position.x - e.mesh.position.x;
+        const dz = s.mesh.position.z - e.mesh.position.z;
+        const dist = Math.hypot(dx, dz) || 1;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        e.mesh.rotation.y = Math.atan2(nx, nz);
+
+        const punchReach = e.r + s.r + 0.45;
+        const holdDist = punchReach - 0.15;
+        if (dist > holdDist + 0.1) {
+          mx = nx;
+          mz = nz;
+        } else if (dist < holdDist - 0.12) {
+          mx = -nx;
+          mz = -nz;
+        } else {
+          mx = 0;
+          mz = 0;
+        }
+
+        if (e.biteCd <= 0 && dist < punchReach) {
+          e.biteCd = 0.55 + Math.random() * 0.25;
+          this._hurtSpaniard(s, e.damage, nx, nz);
+          this._spark(s.mesh.position.x, s.mesh.position.z, COL.blood, 5, 0.25, 1.0);
+        }
       } else {
-        // Push for the city gate
+        // Push for the city gate — often pick on a nearby Spaniard
+        if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
+          e.civHuntCd = 0.7 + Math.random() * 1.1;
+          let nearest = null;
+          let nearestD = CIV_HUNT_RANGE;
+          for (const s of this.spaniards) {
+            if (s.hp <= 0) continue;
+            const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+            if (d < nearestD) {
+              nearestD = d;
+              nearest = s;
+            }
+          }
+          // Closer = almost always attack; farther still often
+          const p = nearestD < 5 ? 0.9 : 0.72;
+          if (nearest && Math.random() < p) {
+            e.civTarget = nearest;
+            e.civHuntTimer = 10 + Math.random() * 6;
+          }
+        }
+
         let tx = dest.x;
         let tz = dest.z;
         // Slight personal offset so they don't stack in a line
@@ -1100,6 +1235,17 @@ export class Game {
             mz += (sz / sd) * 1.6;
           }
         }
+        for (const s of this.spaniards) {
+          if (s.hp <= 0 || e.civTarget === s) continue;
+          const sx = e.mesh.position.x - s.mesh.position.x;
+          const sz = e.mesh.position.z - s.mesh.position.z;
+          const sd = Math.hypot(sx, sz);
+          const min = e.r + s.r + 0.35;
+          if (sd > 0 && sd < min) {
+            mx += (sx / sd) * 1.2;
+            mz += (sz / sd) * 1.2;
+          }
+        }
       }
 
       const mLen = Math.hypot(mx, mz);
@@ -1112,7 +1258,8 @@ export class Game {
         mx /= mLen;
         mz /= mLen;
         const swimSlow = e.swimming ? 0.55 : 1;
-        moveSpeed = (aggressive ? e.speed * 1.15 : e.speed) * swimSlow;
+        const hunting = !!e.civTarget && e.aggroTimer <= 0;
+        moveSpeed = (aggressive ? e.speed * 1.15 : hunting ? e.speed * 1.25 : e.speed) * swimSlow;
         e.mesh.position.x += mx * moveSpeed * dt * control;
         e.mesh.position.z += mz * moveSpeed * dt * control;
       }
@@ -1161,6 +1308,314 @@ export class Game {
       ) {
         this._breach(i);
       }
+    }
+  }
+
+  _spawnSpaniards(count) {
+    if (!this.level || !this._speechLayer) return;
+    const shore = this.level.shoreLine;
+    const city = this.level.breachZ + 6;
+    for (let n = 0; n < count; n++) {
+      const x = -16 + Math.random() * 28;
+      const z = city + Math.random() * Math.max(4, shore - city - 1);
+      this._spawnSpaniard(x, z);
+    }
+  }
+
+  _spawnSpaniard(x, z) {
+    this._pos.x = x;
+    this._pos.z = z;
+    resolveCircle(this._pos, 0.36, this.level.walls);
+    x = this._pos.x;
+    z = clamp(this._pos.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
+
+    const mesh = createPerson(spainClothes(), { armed: false });
+    setArmed(mesh, false);
+    mesh.position.set(x, 0, z);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+    this.world.add(mesh);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'speech';
+    this._speechLayer.appendChild(bubble);
+
+    this.spaniards.push({
+      mesh,
+      bubble,
+      r: 0.36,
+      hp: 5,
+      maxHp: 5,
+      speed: 2.4 + Math.random() * 0.4,
+      fleeSpeed: 5.2 + Math.random() * 0.6,
+      fearTimer: 0,
+      speechCd: 1 + Math.random() * 4,
+      speechLife: 0,
+      wanderCd: Math.random() * 2,
+      wanderTx: x,
+      wanderTz: z,
+      homeX: x,
+      homeZ: z,
+      kbx: 0,
+      kbz: 0,
+      hitFlash: 0,
+      fleeX: 0,
+      fleeZ: 1,
+    });
+  }
+
+  _saySpaniard(s, text, fear = false) {
+    if (!s.bubble) return;
+    s.bubble.textContent = text;
+    s.bubble.classList.toggle('fear', fear);
+    s.bubble.classList.add('on');
+    s.speechLife = fear ? 2.4 : 2.8;
+    s.speechCd = fear ? 1.2 : 4 + Math.random() * 5;
+  }
+
+  _hurtSpaniard(s, damage, dirX = 0, dirZ = 0) {
+    if (!s || s.hp <= 0) return;
+    s.hp -= damage;
+    s.hitFlash = 0.14;
+    s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
+    s.fleeX = dirX;
+    s.fleeZ = dirZ;
+    const len = Math.hypot(dirX, dirZ) || 1;
+    s.kbx = (dirX / len) * (PLAYER_KNOCK_SPEED * 0.85);
+    s.kbz = (dirZ / len) * (PLAYER_KNOCK_SPEED * 0.85);
+    this._saySpaniard(s, randPick(FEAR_LINES), true);
+    this.sfx.playerHurt();
+
+    // Nearby invaders join in on the victim
+    for (const e of this.enemies) {
+      if (e.aggroTimer > 0 || e.knockdownTimer > 0) continue;
+      const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+      if (d > 8) continue;
+      if (e.civTarget === s) {
+        e.civHuntTimer = Math.max(e.civHuntTimer, 8);
+        continue;
+      }
+      if (!e.civTarget && Math.random() < 0.65) {
+        e.civTarget = s;
+        e.civHuntTimer = 8 + Math.random() * 4;
+      }
+    }
+
+    if (s.hp <= 0) {
+      this._killSpaniard(s);
+    }
+  }
+
+  _killSpaniard(s) {
+    const idx = this.spaniards.indexOf(s);
+    if (idx < 0) return;
+    this._spark(s.mesh.position.x, s.mesh.position.z, COL.blood, 10, 0.35, 1.0);
+    this.world.remove(s.mesh);
+    if (s.bubble) s.bubble.remove();
+    this.spaniards.splice(idx, 1);
+    for (const e of this.enemies) {
+      if (e.civTarget === s) {
+        e.civTarget = null;
+        e.civHuntTimer = 0;
+      }
+    }
+  }
+
+  _updateSpaniards(dt) {
+    for (let i = this.spaniards.length - 1; i >= 0; i--) {
+      const s = this.spaniards[i];
+      s.hitFlash = Math.max(0, s.hitFlash - dt);
+      s.fearTimer = Math.max(0, s.fearTimer - dt);
+      s.speechCd = Math.max(0, s.speechCd - dt);
+      s.speechLife = Math.max(0, s.speechLife - dt);
+      s.wanderCd = Math.max(0, s.wanderCd - dt);
+
+      if (s.hitFlash > 0) setTint(s.mesh, 0xffffff);
+      else clearTint(s.mesh);
+
+      if (s.speechLife <= 0 && s.bubble) s.bubble.classList.remove('on');
+
+      let mx = 0;
+      let mz = 0;
+      let moveSpeed = 0;
+      const fleeing = s.fearTimer > 0;
+
+      if (fleeing) {
+        // Run away from attacker with confused zig-zag
+        let fx = s.fleeX;
+        let fz = s.fleeZ;
+        const fl = Math.hypot(fx, fz);
+        if (fl < 0.05) {
+          // Default: away from nearest invader, else toward city
+          let nearest = null;
+          let nd = 12;
+          for (const e of this.enemies) {
+            const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+            if (d < nd) {
+              nd = d;
+              nearest = e;
+            }
+          }
+          if (nearest) {
+            fx = s.mesh.position.x - nearest.mesh.position.x;
+            fz = s.mesh.position.z - nearest.mesh.position.z;
+          } else {
+            fx = 0;
+            fz = -1;
+          }
+        }
+        const n = Math.hypot(fx, fz) || 1;
+        fx /= n;
+        fz /= n;
+        const wobble = Math.sin(this.time * 9 + i * 2.1) * 0.55;
+        mx = fx + (-fz) * wobble;
+        mz = fz + fx * wobble;
+        s.mesh.rotation.y = Math.atan2(mx, mz);
+        moveSpeed = s.fleeSpeed;
+
+        if (s.speechCd <= 0 && Math.random() < 0.35) {
+          this._saySpaniard(s, randPick(FEAR_LINES), true);
+        }
+      } else {
+        // Greet nearby invaders
+        let greet = null;
+        let greetD = SPANIARD_GREET_RANGE;
+        for (const e of this.enemies) {
+          if (e.swimming) continue;
+          const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+          if (d < greetD) {
+            greetD = d;
+            greet = e;
+          }
+        }
+
+        if (greet) {
+          const dx = greet.mesh.position.x - s.mesh.position.x;
+          const dz = greet.mesh.position.z - s.mesh.position.z;
+          s.mesh.rotation.y = Math.atan2(dx, dz);
+          // Drift a little toward them to welcome — but keep a polite distance
+          if (greetD > 2.8) {
+            mx = dx / (greetD || 1);
+            mz = dz / (greetD || 1);
+            moveSpeed = s.speed * 0.7;
+          }
+          if (s.speechCd <= 0) {
+            this._saySpaniard(s, randPick(WELCOME_LINES), false);
+          }
+        } else {
+          // Idle wander near home
+          if (s.wanderCd <= 0) {
+            s.wanderTx = s.homeX + (Math.random() - 0.5) * 6;
+            s.wanderTz = clamp(
+              s.homeZ + (Math.random() - 0.5) * 4,
+              this.level.breachZ + 3,
+              this.level.shoreLine - 0.5,
+            );
+            s.wanderCd = 2.5 + Math.random() * 4;
+          }
+          const dx = s.wanderTx - s.mesh.position.x;
+          const dz = s.wanderTz - s.mesh.position.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > 0.4) {
+            mx = dx / dist;
+            mz = dz / dist;
+            moveSpeed = s.speed * 0.55;
+            s.mesh.rotation.y = Math.atan2(mx, mz);
+          }
+        }
+      }
+
+      // Separation from other Spaniards and invaders
+      for (const o of this.spaniards) {
+        if (o === s) continue;
+        const sx = s.mesh.position.x - o.mesh.position.x;
+        const sz = s.mesh.position.z - o.mesh.position.z;
+        const sd = Math.hypot(sx, sz);
+        const min = s.r + o.r + 0.25;
+        if (sd > 0 && sd < min) {
+          mx += (sx / sd) * 1.4;
+          mz += (sz / sd) * 1.4;
+        }
+      }
+      for (const e of this.enemies) {
+        if (fleeing) continue;
+        const sx = s.mesh.position.x - e.mesh.position.x;
+        const sz = s.mesh.position.z - e.mesh.position.z;
+        const sd = Math.hypot(sx, sz);
+        const min = s.r + e.r + 0.5;
+        if (sd > 0 && sd < min) {
+          mx += (sx / sd) * 0.9;
+          mz += (sz / sd) * 0.9;
+        }
+      }
+
+      const mLen = Math.hypot(mx, mz);
+      const kbLen = Math.hypot(s.kbx, s.kbz);
+      if (mLen > 0.05) {
+        mx /= mLen;
+        mz /= mLen;
+        const control = kbLen > 2 ? 0.35 : 1;
+        s.mesh.position.x += mx * moveSpeed * dt * control;
+        s.mesh.position.z += mz * moveSpeed * dt * control;
+      }
+
+      if (kbLen > 0.02) {
+        s.mesh.position.x += s.kbx * dt;
+        s.mesh.position.z += s.kbz * dt;
+        const damp = Math.exp(-PLAYER_KNOCK_DECAY * dt);
+        s.kbx *= damp;
+        s.kbz *= damp;
+      } else {
+        s.kbx = 0;
+        s.kbz = 0;
+      }
+
+      this._pos.x = s.mesh.position.x;
+      this._pos.z = s.mesh.position.z;
+      resolveCircle(this._pos, s.r, this.level.walls);
+      s.mesh.position.x = clamp(this._pos.x, -this.level.HALF + 0.5, this.level.HALF - 0.5);
+      s.mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
+      // Keep on the beach / promenade — not in deep water
+      if (s.mesh.position.z > this.level.waterLine + 1) {
+        s.mesh.position.z = this.level.waterLine + 1;
+      }
+
+      const waving = !fleeing && s.speechLife > 0;
+      animatePerson(
+        s.mesh,
+        dt,
+        moveSpeed,
+        fleeing,
+        fleeing,
+        false,
+      );
+      // Friendly wave while greeting (override walk arm after anim)
+      if (waving && s.mesh.userData.rig?.rArm) {
+        const rig = s.mesh.userData.rig;
+        const wave = Math.sin(this.time * 10) * 0.35;
+        rig.rArm.rotation.x = -1.4 + wave;
+        rig.rArm.rotation.z = 0.25;
+        if (rig.rElbow) rig.rElbow.rotation.x = -0.25;
+      }
+    }
+  }
+
+  _updateSpeechBubbles() {
+    if (!this._speechLayer || !this.canvas) return;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    for (const s of this.spaniards) {
+      if (!s.bubble || s.speechLife <= 0) continue;
+      this._proj.set(s.mesh.position.x, 2.15, s.mesh.position.z);
+      this._proj.project(this.camera);
+      if (this._proj.z > 1) {
+        s.bubble.style.visibility = 'hidden';
+        continue;
+      }
+      s.bubble.style.visibility = 'visible';
+      const sx = (this._proj.x * 0.5 + 0.5) * w;
+      const sy = (-this._proj.y * 0.5 + 0.5) * h;
+      s.bubble.style.left = `${sx}px`;
+      s.bubble.style.top = `${sy}px`;
     }
   }
 
