@@ -218,13 +218,19 @@ function moroccoClothes(skin) {
   };
 }
 
-function spainClothes() {
+function spainClothes(female = false) {
+  const hair = female
+    ? randPick([0x1a120e, 0x3a2818, 0x5a3a20, 0x6a5030, 0x8a6040, 0xc4a060])
+    : randPick(SPAIN_HAIR);
+  const shirt = female
+    ? randPick([0xe8e0d4, 0xc45c48, 0xe8c84a, 0xf0ece4, 0xd87890, 0x6a8ab0, 0xe8a070])
+    : randPick(SPAIN_SHIRTS);
   return {
     skin: randPick(SPAIN_SKINS),
-    shirt: randPick(SPAIN_SHIRTS),
+    shirt,
     pants: randPick(SPAIN_PANTS),
     boot: Math.random() < 0.5 ? 0x2a2420 : 0x1a1814,
-    hair: randPick(SPAIN_HAIR),
+    hair,
     gun: 0x2a3038,
   };
 }
@@ -1068,7 +1074,7 @@ export class Game {
     x = this._pos.x;
     z = this._pos.z;
 
-    const mesh = createPerson(moroccoClothes(def.skin), { armed: false });
+    const mesh = createPerson(moroccoClothes(def.skin), { armed: false, female: false });
     setArmed(mesh, false);
     mesh.position.set(x, 0, z);
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
@@ -1439,7 +1445,8 @@ export class Game {
     x = this._pos.x;
     z = clamp(this._pos.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
 
-    const mesh = createPerson(spainClothes(), { armed: false });
+    const female = Math.random() < 0.48;
+    const mesh = createPerson(spainClothes(female), { armed: false, female });
     setArmed(mesh, false);
     mesh.position.set(x, 0, z);
     mesh.rotation.y = Math.random() * Math.PI * 2;
@@ -1452,7 +1459,8 @@ export class Game {
     this.spaniards.push({
       mesh,
       bubble,
-      r: 0.36,
+      female,
+      r: female ? 0.34 : 0.36,
       hp: 5,
       maxHp: 5,
       speed: 2.4 + Math.random() * 0.4,
