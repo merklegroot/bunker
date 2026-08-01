@@ -48,6 +48,9 @@ const SPANIARD_GREET_RANGE = 7.5;
 const CIV_HUNT_RANGE = 12;
 const TEAR_DURATION = 1.7;
 const HOLD_DURATION = 5.5;
+const CIV_TARGET_COUNT = 9;
+const CIV_REINFORCE_MIN = 2.4;
+const CIV_REINFORCE_MAX = 5.0;
 
 const WELCOME_LINES = [
   // Spanish
@@ -350,6 +353,7 @@ export class Game {
     this._toSpawn = 0;
     this._spawnCd = 0;
     this._waveClearDelay = 0;
+    this._civReinforceCd = 3;
 
     this._moveSpeed = 0;
     this._pos = { x: 0, z: 0 };
@@ -517,6 +521,7 @@ export class Game {
 
     this._loadMap();
     this._spawnSpaniards(8);
+    this._civReinforceCd = 4;
     this._beginWave(1);
 
     this.input.keys.clear();
@@ -550,9 +555,6 @@ export class Game {
     this._waveClearDelay = 0;
     this._waveTimer = 0;
     this.sfx.waveStart(wave);
-    if (this.spaniards.length < 5) {
-      this._spawnSpaniards(3 + Math.floor(Math.random() * 2));
-    }
   }
 
   pause() {
@@ -646,6 +648,7 @@ export class Game {
     this._updateBoats(dt);
     this._updateEnemies(dt);
     this._updateSpaniards(dt);
+    this._updateCivilianReinforcements(dt);
     this._updateHoldings(dt);
     this._updateTearings(dt);
     this._updateFx(dt);
@@ -1466,12 +1469,49 @@ export class Game {
     }
   }
 
-  _spawnSpaniard(x, z) {
+  /** Top up civilians from the city (−Z) as they're killed off. */
+  _updateCivilianReinforcements(dt) {
+    if (!this.running || !this.level) return;
+    this._civReinforceCd = Math.max(0, (this._civReinforceCd ?? 0) - dt);
+    if (this._civReinforceCd > 0) return;
+    if (this.spaniards.length >= CIV_TARGET_COUNT) {
+      this._civReinforceCd = 1.5;
+      return;
+    }
+    this._spawnSpaniardFromNorth();
+    const deficit = CIV_TARGET_COUNT - this.spaniards.length;
+    // Arrive faster when many are missing
+    const haste = deficit >= 5 ? 0.55 : deficit >= 3 ? 0.75 : 1;
+    this._civReinforceCd = (CIV_REINFORCE_MIN + Math.random() * (CIV_REINFORCE_MAX - CIV_REINFORCE_MIN)) * haste;
+  }
+
+  _spawnSpaniardFromNorth() {
+    if (!this.level || !this._speechLayer) return;
+    const x = -14 + Math.random() * 28;
+    const z = this.level.breachZ - 1.5 - Math.random() * 7;
+    const homeX = clamp(x + (Math.random() - 0.5) * 5, -16, 16);
+    const homeZ = this.level.breachZ + 5 + Math.random() * Math.max(3, this.level.shoreLine - this.level.breachZ - 6);
+    const s = this._spawnSpaniard(x, z, { fromNorth: true });
+    if (!s) return;
+    s.homeX = homeX;
+    s.homeZ = homeZ;
+    s.wanderTx = homeX;
+    s.wanderTz = homeZ;
+    s.wanderCd = 0.2;
+    // Face south toward the beach
+    s.mesh.rotation.y = Math.atan2(homeX - s.mesh.position.x, homeZ - s.mesh.position.z);
+    if (Math.random() < 0.35) {
+      this._saySpaniard(s, randPick(WELCOME_LINES), false);
+    }
+  }
+
+  _spawnSpaniard(x, z, opts = {}) {
     this._pos.x = x;
     this._pos.z = z;
     resolveCircle(this._pos, 0.36, this.level.walls);
     x = this._pos.x;
-    z = clamp(this._pos.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
+    const zMin = opts.fromNorth ? this.level.breachZ - 10 : this.level.breachZ + 3;
+    z = clamp(this._pos.z, zMin, this.level.shoreLine - 0.5);
 
     const female = Math.random() < 0.48;
     const mesh = createPerson(spainClothes(female), { armed: false, female });
@@ -1487,7 +1527,7 @@ export class Game {
     bubble.className = 'speech';
     this._speechLayer.appendChild(bubble);
 
-    this.spaniards.push({
+    const s = {
       mesh,
       hpBar,
       bubble,
@@ -1514,7 +1554,9 @@ export class Game {
       tearing: null,
       heldBy: null,
       holdTimer: 0,
-    });
+    };
+    this.spaniards.push(s);
+    return s;
   }
 
   _saySpaniard(s, text, fear = false) {
