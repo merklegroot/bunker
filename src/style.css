@@ -135,6 +135,44 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #hints kbd { font: inherit; color: var(--accent); margin: 0 2px 0 10px; }
 #hints kbd:first-child { margin-left: 0; }
 
+#radarWrap {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+#radar {
+  width: 140px;
+  height: 140px;
+  border: 1px solid rgba(74, 160, 192, 0.45);
+  background: rgba(8, 22, 32, 0.72);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.35);
+  image-rendering: pixelated;
+}
+#radarLegend {
+  display: flex;
+  gap: 8px;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+}
+#radarLegend span::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-radius: 50%;
+}
+#radarLegend .you::before { background: var(--accent); box-shadow: 0 0 6px rgba(232,196,106,.6); }
+#radarLegend .foe::before { background: var(--danger); }
+#radarLegend .civ::before { background: #8ec8e0; }
+#radarLegend .boat::before { background: var(--warn); border-radius: 1px; }
+
 #overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center;
   background:
     radial-gradient(ellipse at 50% 0%, rgba(74,160,192,.22), transparent 55%),
@@ -165,4 +203,6 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #hints { font-size: 9px; letter-spacing: .04em; }
   #meta { gap: 10px; }
   #score, #wave, #ammo, #breached, #enemies { font-size: 18px; }
+  #radar { width: 110px; height: 110px; }
+  #radarWrap { right: 10px; bottom: 12px; }
 }

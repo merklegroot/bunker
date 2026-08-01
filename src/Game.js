@@ -410,8 +410,10 @@ export class Game {
       stamina: document.getElementById('stamina'),
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
+      radar: document.getElementById('radar'),
     };
     this._speechLayer = document.getElementById('speechLayer');
+    this._radarCtx = this.el.radar?.getContext('2d') ?? null;
     this.el.startBtn.addEventListener('click', () => this.start());
     this.el.resumeBtn.addEventListener('click', () => this.resume());
     this.el.restartBtn.addEventListener('click', () => this.start());
@@ -1866,6 +1868,115 @@ export class Game {
     }
     if (this.el.enemies) {
       this.el.enemies.textContent = String(this.enemies.length + this.boats.reduce((n, b) => n + b.passengers.length, 0));
+    }
+    this._renderRadar();
+  }
+
+  /**
+   * World-fixed radar: city (−Z) at top, sea (+Z) at bottom.
+   */
+  _renderRadar() {
+    const canvas = this.el.radar;
+    const ctx = this._radarCtx;
+    if (!canvas || !ctx || !this.level) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const half = this.level.HALF;
+    // Pad so edge markers aren't clipped
+    const pad = 8;
+    const scale = (Math.min(w, h) - pad * 2) / (half * 2);
+
+    const toX = (wx) => w * 0.5 + wx * scale;
+    // Flip Z so city (−Z) is toward the top of the radar
+    const toY = (wz) => h * 0.5 + wz * scale;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Water / sand / city bands
+    const band = (z0, z1, color) => {
+      const y0 = toY(z0);
+      const y1 = toY(z1);
+      ctx.fillStyle = color;
+      ctx.fillRect(pad, Math.min(y0, y1), w - pad * 2, Math.abs(y1 - y0));
+    };
+    band(half, this.level.waterLine, 'rgba(26, 74, 106, 0.85)');
+    band(this.level.waterLine, this.level.shoreLine, 'rgba(58, 138, 170, 0.55)');
+    band(this.level.shoreLine, this.level.breachZ + 4, 'rgba(216, 196, 154, 0.35)');
+    band(this.level.breachZ + 4, -half, 'rgba(90, 90, 88, 0.45)');
+
+    // Fence (east)
+    ctx.strokeStyle = 'rgba(180, 190, 200, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(toX(this.level.fenceX), toY(-half + 2));
+    ctx.lineTo(toX(this.level.fenceX), toY(half - 2));
+    ctx.stroke();
+
+    // Gate / breach
+    const dest = this.level.destination;
+    const gw = this.level.breachHalfW * scale;
+    ctx.fillStyle = 'rgba(232, 196, 106, 0.85)';
+    ctx.fillRect(toX(dest.x) - gw, toY(dest.z) - 2, gw * 2, 4);
+
+    // Border
+    ctx.strokeStyle = 'rgba(74, 160, 192, 0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+
+    // Boats
+    for (const b of this.boats) {
+      const x = toX(b.mesh.position.x);
+      const y = toY(b.mesh.position.z);
+      ctx.fillStyle = '#e8a040';
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x + 3.5, y + 3);
+      ctx.lineTo(x - 3.5, y + 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Spaniards
+    ctx.fillStyle = '#8ec8e0';
+    for (const s of this.spaniards) {
+      if (s.hp <= 0) continue;
+      ctx.beginPath();
+      ctx.arc(toX(s.mesh.position.x), toY(s.mesh.position.z), 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Invaders
+    for (const e of this.enemies) {
+      const x = toX(e.mesh.position.x);
+      const y = toY(e.mesh.position.z);
+      ctx.fillStyle = e.aggroTimer > 0 || e.civTarget ? '#e05040' : '#c04038';
+      ctx.beginPath();
+      ctx.arc(x, y, e.kind === 'sturdy' ? 3.2 : 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Player — chevron facing movement / facing yaw
+    if (this.player && this.playerAlive) {
+      const px = toX(this.player.position.x);
+      const py = toY(this.player.position.z);
+      // yaw 0 faces +Z (down on radar); rotate chevron accordingly
+      const ang = this.player.rotation.y;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(-ang);
+      ctx.fillStyle = '#e8c46a';
+      ctx.strokeStyle = 'rgba(8, 22, 32, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, 5);
+      ctx.lineTo(4, -4);
+      ctx.lineTo(0, -1.5);
+      ctx.lineTo(-4, -4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
