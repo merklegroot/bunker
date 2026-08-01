@@ -117,7 +117,8 @@ export function createPerson(palette, opts = {}) {
     shin.position.y = -0.68;
     pivot.add(shin);
     const foot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.32), mat(boot));
-    foot.position.set(0, -0.92, -0.04);
+    // Character faces +Z — toes point forward
+    foot.position.set(0, -0.92, 0.1);
     pivot.add(foot);
     return pivot;
   };
