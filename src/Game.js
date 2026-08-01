@@ -21,6 +21,8 @@ const STAMINA_REGEN_DELAY = 0.65;
 const STAMINA_EXHAUST_DELAY = 1.2;
 const PLAYER_RADIUS = 0.4;
 const MAX_HP = 6;
+const HP_REGEN_DELAY = 3.0;
+const HP_REGEN_RATE = 0.22; // hearts per second after delay
 const VIEW_NEAR = 14;
 const VIEW_FAR = 32;
 const BULLET_KNOCKBACK = 0.28;
@@ -63,10 +65,7 @@ const INVADER_KINDS = {
     radius: 0.36,
     damage: 1,
     score: 10,
-    colors: {
-      skin: 0xb89060, shirt: 0x3a5a4a, pants: 0x2a2820,
-      boot: 0x1a1410, hair: 0x1a120c, gun: 0x2a3038,
-    },
+    skin: 0xb89060,
   },
   sturdy: {
     name: 'sturdy',
@@ -75,10 +74,7 @@ const INVADER_KINDS = {
     radius: 0.42,
     damage: 2,
     score: 18,
-    colors: {
-      skin: 0xa87850, shirt: 0x4a3a28, pants: 0x2a2420,
-      boot: 0x151210, hair: 0x2a1a10, gun: 0x2a3038,
-    },
+    skin: 0xa87850,
   },
   sprinter: {
     name: 'sprinter',
@@ -87,12 +83,28 @@ const INVADER_KINDS = {
     radius: 0.32,
     damage: 1,
     score: 14,
-    colors: {
-      skin: 0xc4a070, shirt: 0x5a2a2a, pants: 0x2a2030,
-      boot: 0x1a1410, hair: 0x0e0a08, gun: 0x2a3038,
-    },
+    skin: 0xc4a070,
   },
 };
+
+// Moroccan flag red / green with slight per-person variants
+const MOROCCO_REDS = [0xc1272d, 0xb8222a, 0xd12f35, 0xa61e25, 0xc73a3f, 0xb52a30];
+const MOROCCO_GREENS = [0x006233, 0x0b6e3c, 0x005229, 0x127a48, 0x004a26, 0x0a5f38];
+const MOROCCO_HAIR = [0x1a120c, 0x0e0a08, 0x2a1810, 0x1c1410, 0x24180e];
+
+function moroccoClothes(skin) {
+  const shirt = randPick(MOROCCO_REDS);
+  // Usually green pants; sometimes darker red so the pair still reads as the flag
+  const pants = Math.random() < 0.78 ? randPick(MOROCCO_GREENS) : randPick(MOROCCO_REDS);
+  return {
+    skin,
+    shirt,
+    pants,
+    boot: Math.random() < 0.5 ? 0x1a1210 : 0x15100e,
+    hair: randPick(MOROCCO_HAIR),
+    gun: 0x2a3038,
+  };
+}
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function makeMat(color, opts = {}) {
@@ -173,6 +185,8 @@ export class Game {
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
+    this.regenDelay = 0;
+    this.regenAcc = 0;
     this.stamina = MAX_STAMINA;
     this.staminaRegenCd = 0;
     this.shake = 0;
@@ -242,6 +256,8 @@ export class Game {
 
   _buildPlayer() {
     this.player = createPerson(PLAYER_COLORS, { armed: false });
+    this.playerHpBar = createHealthBar();
+    this.player.add(this.playerHpBar);
     this.world.add(this.player);
     this.player.position.set(this.level.playerSpawn.x, 0, this.level.playerSpawn.z);
     this.playerAlive = true;
@@ -322,6 +338,8 @@ export class Game {
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
+    this.regenDelay = 0;
+    this.regenAcc = 0;
     this.breached = 0;
     this.stamina = MAX_STAMINA;
     this.staminaRegenCd = 0;
@@ -658,11 +676,31 @@ export class Game {
     // Punch in facing direction (click or space) — wait for previous swing to finish
     const dirX = Math.sin(this.player.rotation.y);
     const dirZ = Math.cos(this.player.rotation.y);
-    const wantPunch = this.input.mouse.down || this.input.keys.has('Space');
+    if (this.input.mouse.down || this.input.keys.has('Space')) {
+      if (this.meleeCd <= 0 && this.meleeAnim <= 0) {
+        this.meleeCd = MELEE_COOLDOWN;
+        this._meleeSwing(dirX, dirZ);
+      }
+    }
 
-    if (wantPunch && this.meleeCd <= 0 && this.meleeAnim <= 0) {
-      this.meleeCd = MELEE_COOLDOWN;
-      this._meleeSwing(dirX, dirZ);
+    this._regenPlayer(dt);
+    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
+  }
+
+  _regenPlayer(dt) {
+    if (!this.playerAlive || this.hp <= 0 || this.hp >= this.maxHp) {
+      this.regenAcc = 0;
+      return;
+    }
+    this.regenDelay = Math.max(0, this.regenDelay - dt);
+    if (this.regenDelay > 0) return;
+
+    this.regenAcc += HP_REGEN_RATE * dt;
+    if (this.regenAcc >= 1) {
+      const healed = Math.floor(this.regenAcc);
+      this.regenAcc -= healed;
+      this.hp = Math.min(this.maxHp, this.hp + healed);
+      this._renderHp();
     }
   }
 
@@ -812,7 +850,7 @@ export class Game {
     x = this._pos.x;
     z = this._pos.z;
 
-    const mesh = createPerson(def.colors, { armed: false });
+    const mesh = createPerson(moroccoClothes(def.skin), { armed: false });
     setArmed(mesh, false);
     mesh.position.set(x, 0, z);
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
@@ -1085,11 +1123,14 @@ export class Game {
   _hurt(amount) {
     if (!this.playerAlive) return;
     this.hp = Math.max(0, this.hp - amount);
+    this.regenDelay = HP_REGEN_DELAY;
+    this.regenAcc = 0;
     this.shake = Math.min(1.2, this.shake + 0.55);
     setTint(this.player, 0xffffff);
     setTimeout(() => { if (this.playerAlive) clearTint(this.player); }, 80);
     this._spark(this.player.position.x, this.player.position.z, COL.blood, 8, 0.32, 1.0);
     this._renderHp();
+    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
     if (this.hp <= 0) this.gameOver('fallen');
   }
 
