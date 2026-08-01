@@ -25,6 +25,8 @@ export function createPerson(palette, opts = {}) {
     head: null,
     lArm: null,
     rArm: null,
+    lElbow: null,
+    rElbow: null,
     lLeg: null,
     rLeg: null,
     gun: null,
@@ -51,23 +53,40 @@ export function createPerson(palette, opts = {}) {
   head.add(hairMesh);
 
   const mkArm = (side) => {
-    const pivot = new THREE.Group();
-    pivot.position.set(side * 0.34, 0.48, 0);
-    torso.add(pivot);
-    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.42, 0.16), mat(shirt));
-    upper.position.y = -0.2;
-    pivot.add(upper);
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.14), mat(skin));
-    hand.position.y = -0.46;
-    pivot.add(hand);
-    return pivot;
+    const shoulder = new THREE.Group();
+    shoulder.position.set(side * 0.34, 0.48, 0);
+    torso.add(shoulder);
+
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 0.16), mat(shirt));
+    upper.position.y = -0.18;
+    shoulder.add(upper);
+
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.36;
+    shoulder.add(elbow);
+
+    const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.14), mat(shirt));
+    forearm.position.y = -0.16;
+    elbow.add(forearm);
+
+    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.15), mat(skin));
+    hand.position.y = -0.36;
+    elbow.add(hand);
+
+    // Default slight bend so arms don't look locked
+    elbow.rotation.x = -0.45;
+    return { shoulder, elbow };
   };
-  rig.lArm = mkArm(-1);
-  rig.rArm = mkArm(1);
+  const left = mkArm(-1);
+  const right = mkArm(1);
+  rig.lArm = left.shoulder;
+  rig.rArm = right.shoulder;
+  rig.lElbow = left.elbow;
+  rig.rElbow = right.elbow;
 
   const gunRoot = new THREE.Group();
-  gunRoot.position.set(0.08, -0.42, -0.05);
-  rig.rArm.add(gunRoot);
+  gunRoot.position.set(0.08, -0.15, -0.05);
+  right.elbow.add(gunRoot);
   rig.gun = gunRoot;
 
   const stock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.28), mat(gun));
@@ -130,17 +149,22 @@ export function setArmed(root, armed) {
   if (rig.gun) rig.gun.visible = armed;
   if (armed) {
     rig.rArm.rotation.x = -1.15;
+    rig.rArm.rotation.z = 0;
     rig.lArm.rotation.x = -0.85;
     rig.lArm.rotation.z = 0.35;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.35;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.5;
   } else {
     rig.rArm.rotation.x = 0.15;
     rig.rArm.rotation.z = 0.08;
     rig.lArm.rotation.x = 0.15;
     rig.lArm.rotation.z = -0.08;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.45;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.45;
   }
 }
 
-export function animatePerson(root, dt, speed, sprinting, distressed = false) {
+export function animatePerson(root, dt, speed, sprinting, distressed = false, freezeArms = false) {
   const rig = root.userData.rig;
   if (!rig || !rig.lLeg || !rig.rLeg || !rig.lArm || !rig.rArm) return;
 
@@ -155,12 +179,27 @@ export function animatePerson(root, dt, speed, sprinting, distressed = false) {
   rig.lLeg.rotation.x = Math.sin(phase) * amp;
   rig.rLeg.rotation.x = Math.sin(phase + Math.PI) * amp;
 
+  // During a punch only the punching arm is posed elsewhere — leave arms alone here
+  if (freezeArms) {
+    if (rig.head) {
+      rig.head.rotation.y = 0;
+      rig.head.rotation.x = 0;
+    }
+    if (!distressed) {
+      rig.torso.rotation.y = 0;
+      rig.torso.position.y = 0.95;
+    }
+    return;
+  }
+
   if (distressed) {
     // Flailing / screaming panic
     rig.rArm.rotation.x = -1.6 + Math.sin(phase * 3.1) * 0.9;
     rig.lArm.rotation.x = -1.4 + Math.sin(phase * 2.7 + 1.2) * 0.9;
     rig.rArm.rotation.z = 0.55 + Math.sin(phase * 2.2) * 0.45;
     rig.lArm.rotation.z = -0.55 + Math.sin(phase * 2.4 + 0.8) * 0.45;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.6 + Math.sin(phase * 2.5) * 0.4;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.6 + Math.sin(phase * 2.1) * 0.4;
     if (rig.head) rig.head.rotation.y = Math.sin(phase * 2.8) * 0.45;
     if (rig.head) rig.head.rotation.x = Math.sin(phase * 3.5) * 0.2;
     rig.torso.rotation.y = Math.sin(phase * 1.6) * 0.22;
@@ -176,11 +215,15 @@ export function animatePerson(root, dt, speed, sprinting, distressed = false) {
       rig.lArm.rotation.x = -0.85 + bob * 0.5;
       rig.lArm.rotation.z = 0.35;
       rig.rArm.rotation.z = 0;
+      if (rig.rElbow) rig.rElbow.rotation.x = -0.35;
+      if (rig.lElbow) rig.lElbow.rotation.x = -0.5;
     } else {
       rig.rArm.rotation.x = 0.15 + Math.sin(phase) * amp * 0.7;
       rig.lArm.rotation.x = 0.15 + Math.sin(phase + Math.PI) * amp * 0.7;
       rig.rArm.rotation.z = 0.08;
       rig.lArm.rotation.z = -0.08;
+      if (rig.rElbow) rig.rElbow.rotation.x = -0.45 - Math.sin(phase) * amp * 0.25;
+      if (rig.lElbow) rig.lElbow.rotation.x = -0.45 - Math.sin(phase + Math.PI) * amp * 0.25;
     }
     rig.torso.rotation.y = moving ? Math.sin(phase) * 0.06 : 0;
     rig.torso.position.y = 0.95 + (moving ? Math.abs(Math.sin(phase)) * 0.04 : 0);

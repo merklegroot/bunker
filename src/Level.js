@@ -126,31 +126,6 @@ export function buildLevelSpec(_wave = 1) {
     });
   }
 
-  // Ammo caches on beach / promenade
-  const ammoPoints = [
-    { x: -10, z: 2 },
-    { x: 8, z: -6 },
-    { x: -16, z: -8 },
-    { x: 2, z: 6 },
-    { x: -6, z: -10 },
-    { x: 12, z: 4 },
-  ];
-
-  // Throwable rocks / melee debris
-  // Throwable rocks only for now (sticks / melee props later)
-  const pickupPoints = [
-    { x: -6, z: 4, kind: 'rock' },
-    { x: 4, z: 0, kind: 'rock' },
-    { x: -12, z: -4, kind: 'rock' },
-    { x: 0, z: 8, kind: 'rock' },
-    { x: 6, z: -10, kind: 'rock' },
-    { x: 14, z: 6, kind: 'rock' },
-    { x: -8, z: 10, kind: 'rock' },
-    { x: 10, z: -2, kind: 'rock' },
-    { x: -18, z: 2, kind: 'rock' },
-    { x: -2, z: -6, kind: 'rock' },
-  ];
-
   return {
     MAP,
     HALF,
@@ -169,8 +144,6 @@ export function buildLevelSpec(_wave = 1) {
     fenceX,
     boatSpawns,
     swimSpawns,
-    ammoPoints,
-    pickupPoints,
   };
 }
 

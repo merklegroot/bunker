@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Input } from './Input.js';
 import {
-  createPerson, animatePerson, muzzleWorld, setTint, clearTint, setArmed,
+  createPerson, animatePerson, setTint, clearTint, setArmed,
   createHealthBar, updateHealthBar,
 } from './Character.js';
 import {
@@ -9,7 +9,6 @@ import {
   buildLevelMeshes,
   resolveCircle,
   hasLineOfSight,
-  segmentHitsWall,
 } from './Level.js';
 
 const WALK_SPEED = 5.2;
@@ -21,21 +20,16 @@ const STAMINA_REGEN_IDLE = 0.48;
 const STAMINA_REGEN_DELAY = 0.65;
 const STAMINA_EXHAUST_DELAY = 1.2;
 const PLAYER_RADIUS = 0.4;
-const BULLET_SPEED = 28;
-const FIRE_RATE = 0.22;
 const MAX_HP = 6;
 const VIEW_NEAR = 14;
 const VIEW_FAR = 32;
 const BULLET_KNOCKBACK = 0.28;
-const START_AMMO = 24;
 const BREACH_LIMIT = 12;
 const AGGRO_DURATION = 6.5;
 const WITNESS_RANGE = 11;
-const PICKUP_RANGE = 1.6;
-const THROW_SPEED = 16;
 const MELEE_RANGE = 1.9;
-const MELEE_COOLDOWN = 0.32;
-const MELEE_ANIM = 0.2;
+const MELEE_COOLDOWN = 0.26;
+const MELEE_ANIM = 0.26;
 const MELEE_KNOCK_SPEED = 8.5;
 const MELEE_KNOCK_DECAY = 7.5;
 const PUNCH_LUNGE_SPEED = 6.2;
@@ -46,10 +40,6 @@ const KNOCKDOWN_TIME = 1.6;
 const COMBO_WINDOW = 1.8;
 
 const COL = {
-  playerBullet: 0xe8f0f4,
-  muzzle: 0xffc24a,
-  ammo: 0xd4a020,
-  rock: 0x7a7060,
   blood: 0x8a3030,
   boat: 0x5a4030,
   raft: 0x8a7050,
@@ -186,24 +176,20 @@ export class Game {
     this.stamina = MAX_STAMINA;
     this.staminaRegenCd = 0;
     this.shake = 0;
-    this.fireCd = 0;
     this.meleeCd = 0;
     this.meleeAnim = 0;
     this.punchSide = 1; // 1 = right fist, -1 = left
     this.punchHand = 1;
     this.lungeX = 0;
     this.lungeZ = 0;
-    this.damage = 2;
-    this.fireRate = FIRE_RATE;
-    this.ammo = START_AMMO;
+    this.lungeDirX = 0;
+    this.lungeDirZ = 0;
+    this.lungeArmed = false;
+    this._pendingPunch = null;
     this.breached = 0;
     this.breachLimit = BREACH_LIMIT;
-    this.held = null;
-    this.nearPickup = null;
 
-    this.bullets = [];
     this.enemies = [];
-    this.items = [];
     this.boats = [];
     this.fx = [];
     this._levelRoot = null;
@@ -214,11 +200,6 @@ export class Game {
     this._spawnCd = 0;
     this._waveClearDelay = 0;
 
-    this._ray = new THREE.Raycaster();
-    this._plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    this._hit = new THREE.Vector3();
-    this._aim = new THREE.Vector3();
-    this._muzzle = new THREE.Vector3();
     this._moveSpeed = 0;
     this._pos = { x: 0, z: 0 };
 
@@ -251,7 +232,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 160);
-    this._camOffset = new THREE.Vector3(0, 32, 24);
+    this._camOffset = new THREE.Vector3(0, 23, 17);
     this.camera.position.copy(this._camOffset);
     this.camera.lookAt(0, 0, 0);
 
@@ -265,7 +246,6 @@ export class Game {
     this.player.position.set(this.level.playerSpawn.x, 0, this.level.playerSpawn.z);
     this.playerAlive = true;
     this.sprinting = false;
-    this._heldMesh = null;
   }
 
   _bindUi() {
@@ -279,14 +259,12 @@ export class Game {
       finalScore: document.getElementById('finalScore'),
       score: document.getElementById('score'),
       wave: document.getElementById('wave'),
-      ammo: document.getElementById('ammo'),
       breached: document.getElementById('breached'),
       enemies: document.getElementById('enemies'),
       hp: document.getElementById('hp'),
       stamina: document.getElementById('stamina'),
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
-      held: document.getElementById('held'),
     };
     this.el.startBtn.addEventListener('click', () => this.start());
     this.el.resumeBtn.addEventListener('click', () => this.resume());
@@ -299,11 +277,6 @@ export class Game {
         e.preventDefault();
         if (this.paused) this.resume();
         else if (this.running && this.playerAlive) this.pause();
-        return;
-      }
-      if ((e.code === 'KeyE' || e.code === 'Space') && this.running && !this.paused && this.playerAlive) {
-        e.preventDefault();
-        this._interact();
       }
     });
   }
@@ -334,17 +307,12 @@ export class Game {
   }
 
   _clearEntities() {
-    for (const b of this.bullets) this.world.remove(b.mesh);
     for (const e of this.enemies) this.world.remove(e.mesh);
-    for (const it of this.items) this.world.remove(it.mesh);
     for (const boat of this.boats) this.world.remove(boat.mesh);
     for (const f of this.fx) this.world.remove(f.mesh);
-    this.bullets.length = 0;
     this.enemies.length = 0;
-    this.items.length = 0;
     this.boats.length = 0;
     this.fx.length = 0;
-    this._clearHeldVisual();
   }
 
   start() {
@@ -354,22 +322,20 @@ export class Game {
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
-    this.damage = 2;
-    this.fireRate = FIRE_RATE;
-    this.ammo = START_AMMO;
     this.breached = 0;
-    this.held = null;
-    this.nearPickup = null;
     this.stamina = MAX_STAMINA;
     this.staminaRegenCd = 0;
     this.shake = 0;
-    this.fireCd = 0;
     this.meleeCd = 0;
     this.meleeAnim = 0;
     this.punchSide = 1;
     this.punchHand = 1;
     this.lungeX = 0;
     this.lungeZ = 0;
+    this.lungeDirX = 0;
+    this.lungeDirZ = 0;
+    this.lungeArmed = false;
+    this._pendingPunch = null;
     this.paused = false;
     this.running = true;
     this.time = 0;
@@ -402,13 +368,6 @@ export class Game {
     this.player.position.set(this.level.playerSpawn.x, 0, this.level.playerSpawn.z);
     this.player.rotation.y = 0;
     setArmed(this.player, false);
-
-    for (const p of this.level.ammoPoints) {
-      this._spawnItem(p.x, p.z, 'ammo', 8 + Math.floor(Math.random() * 8));
-    }
-    for (const p of this.level.pickupPoints) {
-      this._spawnItem(p.x, p.z, p.kind);
-    }
   }
 
   _beginWave(wave) {
@@ -462,21 +421,13 @@ export class Game {
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     const aspect = w / Math.max(1, h);
-    const viewH = 26;
+    const viewH = 18.5;
     const viewW = viewH * aspect;
     this.camera.left = -viewW / 2;
     this.camera.right = viewW / 2;
     this.camera.top = viewH / 2;
     this.camera.bottom = -viewH / 2;
     this.camera.updateProjectionMatrix();
-  }
-
-  _aimPoint() {
-    this._ray.setFromCamera(this.input._ndc, this.camera);
-    if (this._ray.ray.intersectPlane(this._plane, this._hit)) {
-      this._aim.copy(this._hit);
-    }
-    return this._aim;
   }
 
   _frame(now) {
@@ -514,9 +465,7 @@ export class Game {
     this._updateWaves(dt);
     if (this.playerAlive) this._updatePlayer(dt);
     this._updateBoats(dt);
-    this._updateBullets(dt);
     this._updateEnemies(dt);
-    this._updateItems(dt);
     this._updateFx(dt);
     this._updateCamera();
     this._renderHud();
@@ -537,32 +486,8 @@ export class Game {
       this._waveClearDelay += dt;
       if (this._waveClearDelay > 2.5) {
         this.score += 40 + this.wave * 15;
-        // Resupply a little between waves
-        this._restockLightly();
         this._beginWave(this.wave + 1);
       }
-    }
-  }
-
-  _restockLightly() {
-    const existingAmmo = this.items.filter((i) => i.kind === 'ammo').length;
-    if (existingAmmo < 3) {
-      const spot = randPick(this.level.ammoPoints);
-      this._spawnItem(
-        spot.x + (Math.random() - 0.5) * 2,
-        spot.z + (Math.random() - 0.5) * 2,
-        'ammo',
-        6 + Math.floor(Math.random() * 6),
-      );
-    }
-    const throwables = this.items.filter((i) => i.kind === 'rock').length;
-    if (throwables < 4) {
-      const spot = randPick(this.level.pickupPoints);
-      this._spawnItem(
-        spot.x + (Math.random() - 0.5),
-        spot.z + (Math.random() - 0.5),
-        'rock',
-      );
     }
   }
 
@@ -613,7 +538,8 @@ export class Game {
     this.boats.push({
       mesh: group,
       speed: 2.2 + Math.random() * 0.8,
-      targetZ: this.level.shoreLine + 1 + Math.random() * 2,
+      // Beach just out of the water — tiny bit inland only
+      targetZ: this.level.waterLine - 0.8 - Math.random() * 1.2,
       passengers,
       bob: Math.random() * Math.PI * 2,
       isRaft,
@@ -717,222 +643,120 @@ export class Game {
       this.player.position.z = this.level.waterLine + 4;
     }
 
-    const aim = this._aimPoint();
-    const dx = aim.x - this.player.position.x;
-    const dz = aim.z - this.player.position.z;
-    if (dx * dx + dz * dz > 0.001) {
-      this.player.rotation.y = Math.atan2(dx, dz);
+    // Face the way we're moving
+    if (moving) {
+      this.player.rotation.y = Math.atan2(axis.x, axis.y);
     }
 
     this._moveSpeed = moving ? speed : 0;
-    animatePerson(this.player, dt, this._moveSpeed, this.sprinting);
+    animatePerson(this.player, dt, this._moveSpeed, this.sprinting, false, this.meleeAnim > 0);
     this._applyMeleePose(dt);
     this._renderStamina();
 
-    this.fireCd = Math.max(0, this.fireCd - dt);
     this.meleeCd = Math.max(0, this.meleeCd - dt);
 
-    const aimLen = Math.hypot(dx, dz) || 1;
-    const dirX = dx / aimLen;
-    const dirZ = dz / aimLen;
+    // Punch in facing direction (click or space) — wait for previous swing to finish
+    const dirX = Math.sin(this.player.rotation.y);
+    const dirZ = Math.cos(this.player.rotation.y);
+    const wantPunch = this.input.mouse.down || this.input.keys.has('Space');
 
-    // Left click — melee (or throw rock)
-    if (this.input.mouse.down && this.meleeCd <= 0) {
-      if (this.held === 'rock') {
-        this.meleeCd = 0.35;
-        this._throwRock(dirX, dirZ);
-      } else {
-        this.meleeCd = MELEE_COOLDOWN;
-        this._meleeSwing(dirX, dirZ);
-      }
+    if (wantPunch && this.meleeCd <= 0 && this.meleeAnim <= 0) {
+      this.meleeCd = MELEE_COOLDOWN;
+      this._meleeSwing(dirX, dirZ);
     }
-
-    // Right click — rifle (scarce ammo)
-    if (this.input.mouse.right && this.fireCd <= 0 && this.held !== 'rock') {
-      if (this.ammo > 0) {
-        this.ammo -= 1;
-        this.fireCd = this.fireRate;
-        this._firePlayer(dirX, dirZ);
-      } else {
-        this.fireCd = 0.3;
-      }
-    }
-
-    this._updateNearPrompt();
-  }
-
-  _updateNearPrompt() {
-    this.nearPickup = null;
-    let best = PICKUP_RANGE;
-    const px = this.player.position.x;
-    const pz = this.player.position.z;
-    for (const it of this.items) {
-      if (it.kind === 'ammo') continue;
-      const d = Math.hypot(it.mesh.position.x - px, it.mesh.position.z - pz);
-      if (d < best) {
-        best = d;
-        this.nearPickup = it;
-      }
-    }
-    // Also allow picking ammo with E when close
-    let nearAmmo = null;
-    for (const it of this.items) {
-      if (it.kind !== 'ammo') continue;
-      const d = Math.hypot(it.mesh.position.x - px, it.mesh.position.z - pz);
-      if (d < PICKUP_RANGE) {
-        nearAmmo = it;
-        break;
-      }
-    }
-
-    if (!this.el.prompt) return;
-    if (this.held) {
-      this.el.prompt.innerHTML = `<kbd>E</kbd> drop ${this.held}`;
-      this.el.prompt.classList.add('on');
-    } else if (this.nearPickup) {
-      this.el.prompt.innerHTML = `<kbd>E</kbd> grab ${this.nearPickup.kind}`;
-      this.el.prompt.classList.add('on');
-    } else if (nearAmmo) {
-      this.el.prompt.innerHTML = `<kbd>E</kbd> take ammo`;
-      this.el.prompt.classList.add('on');
-      this.nearPickup = nearAmmo;
-    } else {
-      this.el.prompt.classList.remove('on');
-    }
-  }
-
-  _interact() {
-    if (this.held) {
-      this._dropHeld();
-      return;
-    }
-    if (!this.nearPickup) return;
-    const it = this.nearPickup;
-    if (it.kind === 'ammo') {
-      this.ammo += it.value;
-      this._spark(it.mesh.position.x, it.mesh.position.z, COL.ammo, 8, 0.3, 0.5);
-      this.world.remove(it.mesh);
-      const idx = this.items.indexOf(it);
-      if (idx >= 0) this.items.splice(idx, 1);
-      return;
-    }
-    this.held = it.kind;
-    this._attachHeldVisual(it.kind);
-    setArmed(this.player, false);
-    this.world.remove(it.mesh);
-    const idx = this.items.indexOf(it);
-    if (idx >= 0) this.items.splice(idx, 1);
-  }
-
-  _dropHeld() {
-    if (!this.held) return;
-    const yaw = this.player.rotation.y;
-    const x = this.player.position.x + Math.sin(yaw) * 0.9;
-    const z = this.player.position.z + Math.cos(yaw) * 0.9;
-    this._spawnItem(x, z, this.held);
-    this.held = null;
-    this._clearHeldVisual();
-    setArmed(this.player, false);
-  }
-
-  _attachHeldVisual(kind) {
-    this._clearHeldVisual();
-    const rig = this.player.userData.rig;
-    if (!rig?.rArm || kind !== 'rock') return;
-
-    const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16, 0), makeMat(COL.rock));
-    mesh.position.set(0, -0.5, -0.15);
-    rig.rArm.add(mesh);
-    this._heldMesh = mesh;
-    rig.rArm.rotation.x = -1.0;
-  }
-
-  _clearHeldVisual() {
-    if (this._heldMesh?.parent) this._heldMesh.parent.remove(this._heldMesh);
-    this._heldMesh = null;
   }
 
   _applyMeleePose(dt) {
     const rig = this.player.userData.rig;
     if (!rig?.rArm || !rig?.lArm) return;
     if (this.meleeAnim <= 0) {
-      if (rig.torso) rig.torso.rotation.y = 0;
+      if (rig.torso) {
+        rig.torso.rotation.y = 0;
+        rig.torso.rotation.x = 0;
+      }
       return;
     }
 
     this.meleeAnim = Math.max(0, this.meleeAnim - dt);
     const t = 1 - this.meleeAnim / MELEE_ANIM;
-    const side = this.punchHand; // 1 = right, -1 = left (set when the punch starts)
+    const side = this.punchHand; // 1 = right, -1 = left
     const punchArm = side > 0 ? rig.rArm : rig.lArm;
     const guardArm = side > 0 ? rig.lArm : rig.rArm;
+    const punchElbow = side > 0 ? rig.rElbow : rig.lElbow;
+    const guardElbow = side > 0 ? rig.lElbow : rig.rElbow;
 
-    // Chamber, then drive the active fist forward
-    if (t < 0.25) {
-      const u = t / 0.25;
-      punchArm.rotation.x = -0.2 - u * 0.7;
-      punchArm.rotation.z = side * (0.45 - u * 0.15);
+    // Impact near full extension
+    if (this.lungeArmed && t >= 0.38) {
+      this.lungeX = this.lungeDirX * PUNCH_LUNGE_SPEED;
+      this.lungeZ = this.lungeDirZ * PUNCH_LUNGE_SPEED;
+      this.lungeArmed = false;
+      if (this._pendingPunch) {
+        const { dirX, dirZ, dmg } = this._pendingPunch;
+        this._pendingPunch = null;
+        let hits = 0;
+        for (let j = this.enemies.length - 1; j >= 0; j--) {
+          const e = this.enemies[j];
+          const dx = e.mesh.position.x - this.player.position.x;
+          const dz = e.mesh.position.z - this.player.position.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > MELEE_RANGE + e.r) continue;
+          const dot = (dx * dirX + dz * dirZ) / (dist || 1);
+          if (dot < 0.05) continue;
+          if (this._punchEnemy(j, dmg, dirX, dirZ)) hits += 1;
+        }
+        if (hits > 0) this.shake = Math.min(0.7, this.shake + 0.22 * hits);
+      }
+    }
+
+    // Single straight jab: drive forward, then retract on the same path
+    // (no side wind-up / side recover — that read as two swings)
+    let shX;
+    let shZ;
+    let elX;
+    if (t < 0.42) {
+      // Extend — ease-in so the snap reads at the end
+      const u = t / 0.42;
+      const extend = u * u;
+      shX = 0.12 - extend * 1.72; // hang → horizontal punch (~-1.6)
+      shZ = side * 0.12 * (1 - extend);
+      elX = -0.5 + extend * 0.4; // bent → nearly straight
     } else {
-      const u = (t - 0.25) / 0.75;
-      punchArm.rotation.x = -0.9 - u * 1.35;
-      punchArm.rotation.z = side * (0.3 - u * 0.45);
+      // Retract — same line back to the side
+      const u = (t - 0.42) / 0.58;
+      const retract = u * u * (3 - 2 * u); // smoothstep
+      shX = -1.6 + retract * 1.72;
+      shZ = side * 0.12 * retract;
+      elX = -0.1 - retract * 0.4;
     }
-    // Opposite fist stays up as a guard
-    guardArm.rotation.x = -0.85;
-    guardArm.rotation.z = -side * 0.4;
 
+    punchArm.rotation.x = shX;
+    punchArm.rotation.y = 0;
+    punchArm.rotation.z = shZ;
+    if (punchElbow) punchElbow.rotation.x = elX;
+
+    // Other arm stays completely still at the side — do not animate it
+    guardArm.rotation.x = 0.15;
+    guardArm.rotation.y = 0;
+    guardArm.rotation.z = -side * 0.08;
+    if (guardElbow) guardElbow.rotation.x = -0.45;
+
+    // No torso twist — arms are parented to torso, so twist would swing both
     if (rig.torso) {
-      rig.torso.rotation.y = side * Math.sin(Math.min(1, t) * Math.PI) * 0.28;
+      rig.torso.rotation.y = 0;
+      rig.torso.rotation.x = 0;
+      rig.torso.position.y = 0.95;
     }
-  }
-
-  _throwRock(dirX, dirZ) {
-    const mesh = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(0.14, 0),
-      makeMat(COL.rock),
-    );
-    mesh.position.set(
-      this.player.position.x + dirX * 0.6,
-      1.1,
-      this.player.position.z + dirZ * 0.6,
-    );
-    this.world.add(mesh);
-    this.bullets.push({
-      mesh,
-      vx: dirX * THROW_SPEED,
-      vz: dirZ * THROW_SPEED,
-      life: 1.4,
-      team: 'player',
-      r: 0.18,
-      damage: 3,
-      kind: 'rock',
-    });
-    this.held = null;
-    this._clearHeldVisual();
-    setArmed(this.player, false);
-    this._spark(mesh.position.x, mesh.position.z, COL.rock, 3, 0.15, 1.0);
   }
 
   _meleeSwing(dirX, dirZ) {
-    const dmg = 3;
     this.punchHand = this.punchSide;
     this.meleeAnim = MELEE_ANIM;
 
-    // Lunge into the punch
-    this.lungeX = dirX * PUNCH_LUNGE_SPEED;
-    this.lungeZ = dirZ * PUNCH_LUNGE_SPEED;
-
-    let hits = 0;
-    for (let j = this.enemies.length - 1; j >= 0; j--) {
-      const e = this.enemies[j];
-      const dx = e.mesh.position.x - this.player.position.x;
-      const dz = e.mesh.position.z - this.player.position.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > MELEE_RANGE + e.r) continue;
-      const dot = (dx * dirX + dz * dirZ) / (dist || 1);
-      if (dot < 0.05) continue;
-      if (this._punchEnemy(j, dmg, dirX, dirZ)) hits += 1;
-    }
-    if (hits > 0) this.shake = Math.min(0.7, this.shake + 0.22 * hits);
+    // Lunge + hit land at impact (see _applyMeleePose)
+    this.lungeDirX = dirX;
+    this.lungeDirZ = dirZ;
+    this.lungeArmed = true;
+    this._pendingPunch = { dirX, dirZ, dmg: 3 };
 
     this.punchSide *= -1;
   }
@@ -975,55 +799,6 @@ export class Game {
     } else {
       e.mesh.rotation.x = 0;
       e.mesh.position.y = e.swimming ? -0.12 : 0;
-    }
-  }
-
-  _firePlayer(dirX, dirZ) {
-    // Brief rifle pose; muzzle from chest if gun is holstered
-    const rig = this.player.userData.rig;
-    const wasArmed = rig?.armed;
-    if (!wasArmed) {
-      setArmed(this.player, true);
-      if (this._heldMesh) this._heldMesh.visible = false;
-    }
-
-    this.player.updateMatrixWorld(true);
-    muzzleWorld(this.player, this._muzzle);
-    if (!wasArmed) {
-      this._muzzle.set(
-        this.player.position.x + dirX * 0.55,
-        1.15,
-        this.player.position.z + dirZ * 0.55,
-      );
-    }
-
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.08, 0.08, 0.42),
-      makeMat(COL.playerBullet),
-    );
-    mesh.position.copy(this._muzzle);
-    mesh.rotation.y = Math.atan2(dirX, dirZ);
-    this.world.add(mesh);
-
-    this.bullets.push({
-      mesh,
-      vx: dirX * BULLET_SPEED,
-      vz: dirZ * BULLET_SPEED,
-      life: 1.1,
-      team: 'player',
-      r: 0.14,
-      damage: this.damage,
-      kind: 'bullet',
-    });
-
-    this._spark(this._muzzle.x, this._muzzle.z, COL.muzzle, 3, 0.16, this._muzzle.y);
-
-    if (!wasArmed) {
-      setTimeout(() => {
-        if (!this.playerAlive) return;
-        setArmed(this.player, false);
-        if (this._heldMesh) this._heldMesh.visible = true;
-      }, 90);
     }
   }
 
@@ -1075,83 +850,6 @@ export class Game {
       comboHits: 0,
       comboDecay: 0,
     });
-  }
-
-  _spawnItem(x, z, kind, value = 1) {
-    const group = new THREE.Group();
-    group.position.set(x, 0, z);
-
-    let color = COL.rock;
-    let geo;
-    let y = 0.25;
-
-    if (kind === 'ammo') {
-      color = COL.ammo;
-      geo = new THREE.BoxGeometry(0.45, 0.28, 0.35);
-      y = 0.22;
-    } else if (kind === 'rock') {
-      color = COL.rock;
-      geo = new THREE.DodecahedronGeometry(0.2, 0);
-      y = 0.22;
-    } else {
-      geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-    }
-
-    const mesh = new THREE.Mesh(geo, makeMat(color));
-    mesh.position.y = y;
-    group.add(mesh);
-
-    if (kind === 'ammo') {
-      const glow = new THREE.Mesh(
-        new THREE.CircleGeometry(0.5, 12),
-        new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: 0.28,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          polygonOffsetUnits: -2,
-        }),
-      );
-      glow.rotation.x = -Math.PI / 2;
-      glow.position.y = 0.06;
-      glow.renderOrder = 1;
-      group.add(glow);
-    }
-
-    this.world.add(group);
-    this.items.push({
-      mesh: group,
-      bob: mesh,
-      kind,
-      r: kind === 'ammo' ? 0.7 : 0.55,
-      value: kind === 'ammo' ? value : 1,
-      phase: Math.random() * Math.PI * 2,
-    });
-  }
-
-  _updateItems(dt) {
-    const px = this.player.position.x;
-    const pz = this.player.position.z;
-
-    for (let i = this.items.length - 1; i >= 0; i--) {
-      const it = this.items[i];
-      it.phase += dt * 2.2;
-      if (it.bob && it.kind === 'ammo') {
-        it.bob.position.y = 0.22 + Math.sin(it.phase) * 0.1;
-        it.bob.rotation.y += dt * 1.5;
-      }
-
-      // Auto-pickup ammo on walkover
-      if (!this.playerAlive || it.kind !== 'ammo') continue;
-      const d = Math.hypot(it.mesh.position.x - px, it.mesh.position.z - pz);
-      if (d > it.r + PLAYER_RADIUS) continue;
-      this.ammo += it.value;
-      this._spark(it.mesh.position.x, it.mesh.position.z, COL.ammo, 8, 0.3, 0.5);
-      this.world.remove(it.mesh);
-      this.items.splice(i, 1);
-    }
   }
 
   _enrage(enemy, duration = AGGRO_DURATION) {
@@ -1375,69 +1073,10 @@ export class Game {
     mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
   }
 
-  _updateBullets(dt) {
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const b = this.bullets[i];
-      const prevX = b.mesh.position.x;
-      const prevZ = b.mesh.position.z;
-      b.mesh.position.x += b.vx * dt;
-      b.mesh.position.z += b.vz * dt;
-      if (b.kind === 'rock') {
-        b.mesh.position.y = Math.max(0.15, b.mesh.position.y - 4 * dt);
-        b.mesh.rotation.x += dt * 8;
-        b.mesh.rotation.z += dt * 6;
-      }
-      b.life -= dt;
-
-      const hitWall = segmentHitsWall(
-        prevX, prevZ,
-        b.mesh.position.x, b.mesh.position.z,
-        this.level.walls,
-        0.05,
-      );
-
-      const out = Math.abs(b.mesh.position.x) > this.level.HALF + 2
-        || Math.abs(b.mesh.position.z) > this.level.HALF + 2
-        || b.life <= 0
-        || hitWall;
-
-      if (out) {
-        if (hitWall) this._spark(b.mesh.position.x, b.mesh.position.z, 0x6a6050, 3, 0.12, 1.0);
-        // Spent rock becomes a pickup again sometimes
-        if (b.kind === 'rock' && Math.random() < 0.35 && !hitWall) {
-          this._spawnItem(b.mesh.position.x, b.mesh.position.z, 'rock');
-        }
-        this.world.remove(b.mesh);
-        this.bullets.splice(i, 1);
-        continue;
-      }
-
-      if (b.team === 'player') {
-        for (let j = this.enemies.length - 1; j >= 0; j--) {
-          const e = this.enemies[j];
-          const dx = b.mesh.position.x - e.mesh.position.x;
-          const dz = b.mesh.position.z - e.mesh.position.z;
-          if (dx * dx + dz * dz < (e.r + b.r) ** 2) {
-            const rockImpulse = b.kind === 'rock' ? 5.5 : 3.2;
-            this.world.remove(b.mesh);
-            this.bullets.splice(i, 1);
-            this._damageEnemy(j, b.damage, b.vx, b.vz, rockImpulse);
-            break;
-          }
-        }
-      }
-    }
-  }
-
   _killEnemy(index) {
     const e = this.enemies[index];
     if (!e) return;
     this._spark(e.mesh.position.x, e.mesh.position.z, COL.blood, 14, 0.45, 1.0);
-    if (Math.random() < 0.12) {
-      this._spawnItem(e.mesh.position.x, e.mesh.position.z, 'ammo', 2 + Math.floor(Math.random() * 3));
-    } else if (Math.random() < 0.18) {
-      this._spawnItem(e.mesh.position.x, e.mesh.position.z, 'rock');
-    }
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     this.score += e.score;
@@ -1517,15 +1156,11 @@ export class Game {
   _renderHud() {
     if (this.el.score) this.el.score.textContent = String(this.score);
     if (this.el.wave) this.el.wave.textContent = String(this.wave);
-    if (this.el.ammo) this.el.ammo.textContent = String(this.ammo);
     if (this.el.breached) {
       this.el.breached.textContent = `${this.breached}/${this.breachLimit}`;
     }
     if (this.el.enemies) {
       this.el.enemies.textContent = String(this.enemies.length + this.boats.reduce((n, b) => n + b.passengers.length, 0));
-    }
-    if (this.el.held) {
-      this.el.held.textContent = this.held ? this.held.toUpperCase() : 'FISTS';
     }
   }
 
