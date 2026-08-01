@@ -47,7 +47,8 @@ const KNOCKDOWN_TIME = 1.6;
 const COMBO_WINDOW = 1.8;
 const SPANIARD_FEAR_TIME = 5.5;
 const SPANIARD_GREET_RANGE = 7.5;
-const CIV_HUNT_RANGE = 12;
+const TEAR_PAIR_CIV_RANGE = 5.2;
+const TEAR_PAIR_ALLY_RANGE = 7.5;
 const TEAR_DURATION = 1.7;
 const HOLD_DURATION = 5.5;
 const CIV_TARGET_COUNT = 9;
@@ -1343,40 +1344,36 @@ export class Game {
 
           if (e.biteCd <= 0 && dist < punchReach) {
             e.biteCd = 0.55 + Math.random() * 0.25;
-            // Second invader arrives while someone is already holding → start tear
+            // Designated partner arrives while someone is holding → start tear
             if (s.heldBy && s.heldBy !== e && !s.tearing) {
               this._beginTearSpaniard(s);
-            } else if (!s.heldBy && !s.tearing && this._countSwarmOn(s, 3.2) < 2 && Math.random() < 0.5) {
+            } else if (
+              !s.heldBy
+              && !s.tearing
+              && this._countHuntersOn(s) === 2
+              && this._countSwarmOn(s, 3.2) >= 2
+              && Math.random() < 0.7
+            ) {
+              this._beginTearSpaniard(s);
+            } else if (
+              !s.heldBy
+              && !s.tearing
+              && this._countHuntersOn(s) === 2
+              && Math.random() < 0.45
+            ) {
               this._beginHoldCivilian(e, s);
-            } else if (!s.heldBy) {
+            } else if (!s.heldBy && this._countHuntersOn(s) <= 2) {
               this._hurtSpaniard(s, e.damage, nx, nz);
               this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
-              if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+              if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_CIV_LINES));
             }
           }
         }
       } else if (!tearing && !holding) {
-        // Push for the city gate — often pick on a nearby Spaniard
+        // Push for the city gate — occasionally pair up for a pull-apart if ally is nearby
         if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
-          e.civHuntCd = 0.7 + Math.random() * 1.1;
-          let nearest = null;
-          let nearestD = CIV_HUNT_RANGE;
-          // Prefer civilians already being held (backup for a pull-apart)
-          for (const s of this.spaniards) {
-            if (s.hp <= 0 || s.tearing) continue;
-            const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
-            const score = s.heldBy ? d * 0.45 : d;
-            if (score < nearestD) {
-              nearestD = score;
-              nearest = s;
-            }
-          }
-          const p = nearest?.heldBy ? 0.95 : (nearestD < 5 ? 0.9 : 0.72);
-          if (nearest && Math.random() < p) {
-            e.civTarget = nearest;
-            e.civHuntTimer = 10 + Math.random() * 6;
-            if (Math.random() < 0.45) this._sayInvader(e, randPick(INVADER_CIV_LINES));
-          }
+          e.civHuntCd = 1.6 + Math.random() * 1.8;
+          this._maybeProposeTearPair(e);
         }
 
         if (!downed && !stunned && !e.swimming && e.speechCd <= 0) {
@@ -1650,36 +1647,27 @@ export class Game {
       this._bloodSpray(s.mesh.position.x, s.mesh.position.z, dirX, dirZ, { mild: true });
     }
 
-    // Nearby invaders join in on the victim (not when the player struck them)
-    if (!opts.fromPlayer) {
-      for (const e of this.enemies) {
-        if (e.aggroTimer > 0 || e.knockdownTimer > 0 || e.tearing || e.holding) continue;
-        const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
-        if (d > 8) continue;
-        if (e.civTarget === s) {
-          e.civHuntTimer = Math.max(e.civHuntTimer, 8);
-          continue;
-        }
-        if (!e.civTarget && Math.random() < 0.65) {
-          e.civTarget = s;
-          e.civHuntTimer = 8 + Math.random() * 4;
-        }
-      }
-
-      // Two+ invaders in melee can start a pull-apart
-      const swarm = this._countSwarmOn(s, 3.1);
-      if (swarm >= 2 && !s.tearing) {
-        s.pullPressure = (s.pullPressure || 0) + 1;
-        if (s.pullPressure >= 2 || (s.hp <= 2 && Math.random() < 0.55) || Math.random() < 0.28) {
-          this._beginTearSpaniard(s);
-          return;
-        }
+    // Pair already committed: if both are in melee, start the pull-apart
+    if (!opts.fromPlayer && !s.tearing && this._countHuntersOn(s) === 2 && this._countSwarmOn(s, 3.1) >= 2) {
+      s.pullPressure = (s.pullPressure || 0) + 1;
+      if (s.pullPressure >= 2 || Math.random() < 0.35) {
+        this._beginTearSpaniard(s);
+        return;
       }
     }
 
     if (s.hp <= 0) {
       this._killSpaniard(s, { fromPunch: !!opts.fromPlayer, dirX, dirZ });
     }
+  }
+
+  _countHuntersOn(s) {
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.knockdownTimer > 0 || e.tearing) continue;
+      if (e.civTarget === s || e.holding === s) n += 1;
+    }
+    return n;
   }
 
   _countSwarmOn(s, range) {
@@ -1694,7 +1682,55 @@ export class Game {
     return n;
   }
 
-  /** Solo invader pins a civilian and calls for backup to pull them apart. */
+  /** Nearby invader + free ally sometimes agree to pull a civilian apart (exactly two). */
+  _maybeProposeTearPair(e) {
+    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
+
+    let bestS = null;
+    let bestD = TEAR_PAIR_CIV_RANGE;
+    for (const s of this.spaniards) {
+      if (s.hp <= 0 || s.tearing || s.heldBy) continue;
+      if (this._countHuntersOn(s) > 0) continue;
+      const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+      if (d < bestD) {
+        bestD = d;
+        bestS = s;
+      }
+    }
+    if (!bestS) return;
+
+    let partner = null;
+    let partnerScore = TEAR_PAIR_ALLY_RANGE;
+    for (const o of this.enemies) {
+      if (o === e || o.civTarget || o.holding || o.tearing) continue;
+      if (o.knockdownTimer > 0 || o.stunTimer > 0 || o.aggroTimer > 0) continue;
+      const dAlly = Math.hypot(o.mesh.position.x - e.mesh.position.x, o.mesh.position.z - e.mesh.position.z);
+      if (dAlly > TEAR_PAIR_ALLY_RANGE) continue;
+      const dCiv = Math.hypot(
+        o.mesh.position.x - bestS.mesh.position.x,
+        o.mesh.position.z - bestS.mesh.position.z,
+      );
+      if (dCiv > TEAR_PAIR_ALLY_RANGE + 1.5) continue;
+      if (dAlly < partnerScore) {
+        partnerScore = dAlly;
+        partner = o;
+      }
+    }
+    if (!partner) return;
+    // Not every encounter — opportunistic
+    if (Math.random() > 0.32) return;
+
+    const timer = 5.5 + Math.random() * 2.5;
+    e.civTarget = bestS;
+    e.civHuntTimer = timer;
+    partner.civTarget = bestS;
+    partner.civHuntTimer = timer;
+    if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+    if (Math.random() < 0.4) this._sayInvader(partner, randPick(INVADER_CIV_LINES));
+  }
+
+  /** One of a designated pair pins the civilian while the partner closes in. */
   _beginHoldCivilian(holder, s) {
     if (!holder || !s || s.tearing || s.heldBy || holder.holding || holder.tearing) return;
     s.heldBy = holder;
@@ -1709,19 +1745,32 @@ export class Game {
     holder.kbz = 0;
     this._saySpaniard(s, randPick(FEAR_LINES), true);
     this._sayInvader(holder, randPick(INVADER_CIV_LINES));
-    this._callHelpForHold(s, holder);
+    this._dropExtraHunters(s, holder);
   }
 
-  _callHelpForHold(s, holder) {
+  /** Keep at most two hunters on a civilian (holder + one partner). */
+  _dropExtraHunters(s, keep) {
+    const keepSet = new Set();
+    if (keep) keepSet.add(keep);
+    if (s.heldBy) keepSet.add(s.heldBy);
+    // Preserve the closest other hunter as the partner slot
+    let partner = null;
+    let partnerD = Infinity;
     for (const e of this.enemies) {
-      if (e === holder || e.tearing || e.holding || e.knockdownTimer > 0) continue;
+      if (keepSet.has(e)) continue;
+      if (e.civTarget !== s && e.holding !== s) continue;
       const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
-      if (d > 20) continue;
-      // Drop gate trek and come help
-      if (!e.civTarget || e.civTarget === s || Math.random() < 0.75) {
-        e.civTarget = s;
-        e.civHuntTimer = Math.max(e.civHuntTimer, 9);
-        if (d < 12 && Math.random() < 0.35) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+      if (d < partnerD) {
+        partnerD = d;
+        partner = e;
+      }
+    }
+    if (partner) keepSet.add(partner);
+    for (const e of this.enemies) {
+      if (keepSet.has(e)) continue;
+      if (e.civTarget === s) {
+        e.civTarget = null;
+        e.civHuntTimer = 0;
       }
     }
   }
@@ -1791,8 +1840,6 @@ export class Game {
       }
 
       if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
-      // Periodically yell for more help
-      if (Math.random() < dt * 0.35) this._callHelpForHold(s, holder);
 
       if (s.hpBar) updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
     }
@@ -1879,12 +1926,22 @@ export class Game {
     s.fearTimer = TEAR_DURATION + 1;
     a.tearing = s;
     b.tearing = s;
+    a.civTarget = s;
+    b.civTarget = s;
+    a.civHuntTimer = TEAR_DURATION + 1;
+    b.civHuntTimer = TEAR_DURATION + 1;
+    // Only the pair participates — drop anyone else queued on this civilian
+    for (const e of this.enemies) {
+      if (e === a || e === b) continue;
+      if (e.civTarget === s) {
+        e.civTarget = null;
+        e.civHuntTimer = 0;
+      }
+    }
     a.kbx = 0;
     a.kbz = 0;
     b.kbx = 0;
     b.kbz = 0;
-    a.civHuntTimer = TEAR_DURATION + 1;
-    b.civHuntTimer = TEAR_DURATION + 1;
 
     this._saySpaniard(s, randPick(FEAR_LINES), true);
     this._sayInvader(a, randPick(INVADER_CIV_LINES));
