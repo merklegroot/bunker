@@ -36,6 +36,8 @@ const MELEE_KNOCK_SPEED = 8.5;
 const MELEE_KNOCK_DECAY = 7.5;
 const PUNCH_LUNGE_SPEED = 6.2;
 const PUNCH_LUNGE_DECAY = 10;
+const PLAYER_KNOCK_SPEED = 7.5;
+const PLAYER_KNOCK_DECAY = 8;
 const PUNCH_STUN = 0.55;
 const PUNCHES_TO_DOWN = 3;
 const KNOCKDOWN_TIME = 1.6;
@@ -199,6 +201,8 @@ export class Game {
     this.lungeDirX = 0;
     this.lungeDirZ = 0;
     this.lungeArmed = false;
+    this.kbx = 0;
+    this.kbz = 0;
     this._pendingPunch = null;
     this.breached = 0;
     this.breachLimit = BREACH_LIMIT;
@@ -353,6 +357,8 @@ export class Game {
     this.lungeDirX = 0;
     this.lungeDirZ = 0;
     this.lungeArmed = false;
+    this.kbx = 0;
+    this.kbz = 0;
     this._pendingPunch = null;
     this.paused = false;
     this.running = true;
@@ -648,6 +654,18 @@ export class Game {
     } else {
       this.lungeX = 0;
       this.lungeZ = 0;
+    }
+
+    // Hit knockback — shove away from the attacker
+    if (Math.hypot(this.kbx, this.kbz) > 0.05) {
+      this.player.position.x += this.kbx * dt;
+      this.player.position.z += this.kbz * dt;
+      const damp = Math.exp(-PLAYER_KNOCK_DECAY * dt);
+      this.kbx *= damp;
+      this.kbz *= damp;
+    } else {
+      this.kbx = 0;
+      this.kbz = 0;
     }
 
     this._pos.x = this.player.position.x;
@@ -1011,7 +1029,7 @@ export class Game {
 
         if (e.biteCd <= 0 && dist < e.r + PLAYER_RADIUS + 0.4) {
           e.biteCd = 0.85 + Math.random() * 0.35;
-          this._hurt(e.damage);
+          this._hurt(e.damage, nx, nz);
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
         }
       } else {
@@ -1151,12 +1169,20 @@ export class Game {
     this.score += e.score;
   }
 
-  _hurt(amount) {
+  _hurt(amount, dirX = 0, dirZ = 0) {
     if (!this.playerAlive) return;
     this.hp = Math.max(0, this.hp - amount);
     this.regenDelay = HP_REGEN_DELAY;
     this.regenAcc = 0;
     this.shake = Math.min(1.2, this.shake + 0.55);
+
+    const len = Math.hypot(dirX, dirZ);
+    if (len > 0.01) {
+      const power = PLAYER_KNOCK_SPEED * (0.85 + 0.2 * amount);
+      this.kbx = (dirX / len) * power;
+      this.kbz = (dirZ / len) * power;
+    }
+
     setTint(this.player, 0xffffff);
     setTimeout(() => { if (this.playerAlive) clearTint(this.player); }, 80);
     this._spark(this.player.position.x, this.player.position.z, COL.blood, 8, 0.32, 1.0);
