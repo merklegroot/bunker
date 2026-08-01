@@ -76,16 +76,20 @@ export function createPerson(palette, opts = {}) {
   head.add(hairTop);
 
   if (female) {
-    // Longer hair down the back and sides
-    const hairBack = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.42, 0.1), hairMat);
-    hairBack.position.set(0, -0.08, -0.2);
+    // Long hair down the back and over the shoulders
+    const hairBack = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.85, 0.12), hairMat);
+    hairBack.position.set(0, -0.32, -0.2);
     head.add(hairBack);
-    const hairL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.36, 0.22), hairMat);
-    hairL.position.set(-0.18, -0.06, -0.04);
+    const hairL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.72, 0.24), hairMat);
+    hairL.position.set(-0.19, -0.28, -0.02);
     head.add(hairL);
-    const hairR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.36, 0.22), hairMat);
-    hairR.position.set(0.18, -0.06, -0.04);
+    const hairR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.72, 0.24), hairMat);
+    hairR.position.set(0.19, -0.28, -0.02);
     head.add(hairR);
+    // Extra length at the tips / mid-back
+    const hairTail = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.35, 0.1), hairMat);
+    hairTail.position.set(0, -0.72, -0.18);
+    head.add(hairTail);
   }
 
   const shoulderX = female ? 0.28 : 0.34;
