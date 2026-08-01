@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#08060a" />
+<title>DUNGEON</title>
+<meta name="description" content="A top-down roguelike dungeon crawler. Descend, loot, survive." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="manifest" href="/site.webmanifest" />
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <div id="hudTop">
+      <div id="vitals">
+        <div id="hp" aria-label="health"></div>
+        <div id="stamina" role="meter" aria-label="stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+          <div id="staminaFill"></div>
+        </div>
+      </div>
+      <div id="meta">
+        <div id="floorWrap"><span id="floorLabel">FLOOR</span><span id="floor">1</span></div>
+        <div id="goldWrap"><span id="goldLabel">GOLD</span><span id="gold">0</span></div>
+        <div id="enemiesWrap"><span id="enemiesLabel">FOES</span><span id="enemies">0</span></div>
+        <div id="scoreWrap"><span id="scoreLabel">SCORE</span><span id="score">0</span></div>
+      </div>
+    </div>
+    <div id="prompt" aria-live="polite"><kbd>E</kbd> descend</div>
+    <div id="hints">
+      <kbd>WASD</kbd> move
+      <kbd>SHIFT</kbd> run
+      <kbd>MOUSE</kbd> aim
+      <kbd>CLICK</kbd> shoot
+      <kbd>E</kbd> stairs
+      <kbd>ESC</kbd> pause
+    </div>
+  </div>
+
+  <div id="overlay" class="on">
+    <div class="panel">
+      <h1 id="title">DUNGEON</h1>
+      <p id="subtitle">Procedural floors. Monsters. Loot. Permadeath. How deep can you go?</p>
+      <p id="finalScore" class="hidden"></p>
+      <div id="menuActions">
+        <button id="startBtn" type="button">DESCEND</button>
+        <button id="resumeBtn" class="hidden" type="button">RESUME</button>
+        <button id="restartBtn" class="hidden" type="button">RESTART</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
