@@ -8,8 +8,10 @@ import {
 import {
   buildLevelSpec,
   buildLevelMeshes,
+  buildNavGrid,
   resolveCircle,
   hasLineOfSight,
+  steerTo,
 } from './Level.js';
 
 const WALK_SPEED = 5.2;
@@ -378,6 +380,7 @@ export class Game {
     this._pos = { x: 0, z: 0 };
 
     this.level = buildLevelSpec(1);
+    this.nav = buildNavGrid(this.level);
 
     this._initThree();
     this._levelRoot = new THREE.Group();
@@ -556,6 +559,7 @@ export class Game {
     this._clearEntities();
     this.level = buildLevelSpec(this.wave);
     buildLevelMeshes(this._levelRoot, this.level);
+    this.nav = buildNavGrid(this.level);
 
     this.world.remove(this.fogMask);
     this.fogMask = createFogMask(this.level.MAP);
@@ -1214,6 +1218,21 @@ export class Game {
     if (e.hp <= 0) this._killEnemy(index, { fromPunch: !!opts.fromPunch, dirX, dirZ });
   }
 
+  /** Unit steer toward a world point, pathing around walls when needed. */
+  _steer(agent, tx, tz) {
+    if (!agent._pathState) agent._pathState = {};
+    return steerTo(
+      this.nav,
+      this.level.walls,
+      agent.mesh.position.x,
+      agent.mesh.position.z,
+      tx,
+      tz,
+      agent._pathState,
+      this.time,
+    );
+  }
+
   _updateEnemies(dt) {
     const px = this.player.position.x;
     const pz = this.player.position.z;
@@ -1268,27 +1287,26 @@ export class Game {
         mx = 0;
         mz = 0;
       } else if (aggressive) {
-        const dx = px - e.mesh.position.x;
-        const dz = pz - e.mesh.position.z;
-        const dist = Math.hypot(dx, dz) || 1;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        e.mesh.rotation.y = Math.atan2(nx, nz);
-
-        // Hold just inside punching range — don't pile onto the player
         const punchReach = e.r + PLAYER_RADIUS + 0.45;
         const holdDist = punchReach - 0.2;
+        const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
+        const steer = this._steer(e, px, pz);
+        e.mesh.rotation.y = Math.atan2(steer.x || (px - e.mesh.position.x), steer.z || (pz - e.mesh.position.z));
+
+        // Hold just inside punching range — don't pile onto the player
         if (dist > holdDist + 0.12) {
-          mx = nx;
-          mz = nz;
+          mx = steer.x;
+          mz = steer.z;
         } else if (dist < holdDist - 0.1) {
-          mx = -nx;
-          mz = -nz;
+          mx = -(px - e.mesh.position.x) / dist;
+          mz = -(pz - e.mesh.position.z) / dist;
         } else {
           mx = 0;
           mz = 0;
         }
 
+        const nx = (px - e.mesh.position.x) / dist;
+        const nz = (pz - e.mesh.position.z) / dist;
         if (e.biteCd <= 0 && dist < punchReach) {
           e.biteCd = 0.85 + Math.random() * 0.35;
           this._hurt(e.damage, nx, nz);
@@ -1305,15 +1323,16 @@ export class Game {
           const dx = s.mesh.position.x - e.mesh.position.x;
           const dz = s.mesh.position.z - e.mesh.position.z;
           const dist = Math.hypot(dx, dz) || 1;
+          const steer = this._steer(e, s.mesh.position.x, s.mesh.position.z);
           const nx = dx / dist;
           const nz = dz / dist;
-          e.mesh.rotation.y = Math.atan2(nx, nz);
+          e.mesh.rotation.y = Math.atan2(steer.x || nx, steer.z || nz);
 
           const punchReach = e.r + s.r + 0.45;
           const holdDist = punchReach - 0.15;
           if (dist > holdDist + 0.1) {
-            mx = nx;
-            mz = nz;
+            mx = steer.x;
+            mz = steer.z;
           } else if (dist < holdDist - 0.12) {
             mx = -nx;
             mz = -nz;
@@ -1369,12 +1388,10 @@ export class Game {
         let tz = dest.z;
         // Slight personal offset so they don't stack in a line
         tx += Math.sin(i * 2.7) * 2.5;
-        const dx = tx - e.mesh.position.x;
-        const dz = tz - e.mesh.position.z;
-        const dist = Math.hypot(dx, dz) || 1;
-        mx = dx / dist;
-        mz = dz / dist;
-        e.mesh.rotation.y = Math.atan2(mx, mz);
+        const steer = this._steer(e, tx, tz);
+        mx = steer.x;
+        mz = steer.z;
+        if (mx || mz) e.mesh.rotation.y = Math.atan2(mx, mz);
 
         // Soft avoid player when close but not aggressive (sidestep)
         if (this.playerAlive) {
@@ -1422,6 +1439,9 @@ export class Game {
         ? 0
         : (kbLen > 3 ? 0.12 : kbLen > 1 ? 0.4 : 1);
 
+      const startX = e.mesh.position.x;
+      const startZ = e.mesh.position.z;
+
       if (mLen > 0.05 && control > 0) {
         mx /= mLen;
         mz /= mLen;
@@ -1449,6 +1469,22 @@ export class Game {
       resolveCircle(this._pos, e.r, this.level.walls);
       e.mesh.position.x = clamp(this._pos.x, -this.level.HALF + 0.5, this.level.HALF - 0.5);
       e.mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
+
+      // Stuck against a wall while trying to move — force repath + small side nudge
+      if (!downed && !stunned && moveSpeed > 0.5 && mLen > 0.05) {
+        const moved = Math.hypot(e.mesh.position.x - startX, e.mesh.position.z - startZ);
+        if (moved < moveSpeed * dt * control * 0.15) {
+          if (e._pathState) e._pathState.until = 0;
+          const side = (i % 2 === 0) ? 1 : -1;
+          e.mesh.position.x += (-mz) * side * 1.2 * dt;
+          e.mesh.position.z += mx * side * 1.2 * dt;
+          this._pos.x = e.mesh.position.x;
+          this._pos.z = e.mesh.position.z;
+          resolveCircle(this._pos, e.r, this.level.walls);
+          e.mesh.position.x = this._pos.x;
+          e.mesh.position.z = this._pos.z;
+        }
+      }
 
       if (downed) {
         e.mesh.rotation.x = Math.PI / 2;
@@ -2193,9 +2229,12 @@ export class Game {
         const n = Math.hypot(fx, fz) || 1;
         fx /= n;
         fz /= n;
-        const wobble = Math.sin(this.time * 9 + i * 2.1) * 0.55;
-        mx = fx + (-fz) * wobble;
-        mz = fz + fx * wobble;
+        const fleeTx = s.mesh.position.x + fx * 10;
+        const fleeTz = s.mesh.position.z + fz * 10;
+        const steer = this._steer(s, fleeTx, fleeTz);
+        const wobble = Math.sin(this.time * 9 + i * 2.1) * 0.35;
+        mx = steer.x + (-steer.z) * wobble;
+        mz = steer.z + steer.x * wobble;
         s.mesh.rotation.y = Math.atan2(mx, mz);
         moveSpeed = s.fleeSpeed;
 
@@ -2221,8 +2260,9 @@ export class Game {
           s.mesh.rotation.y = Math.atan2(dx, dz);
           // Drift a little toward them to welcome — but keep a polite distance
           if (greetD > 2.8) {
-            mx = dx / (greetD || 1);
-            mz = dz / (greetD || 1);
+            const steer = this._steer(s, greet.mesh.position.x, greet.mesh.position.z);
+            mx = steer.x;
+            mz = steer.z;
             moveSpeed = s.speed * 0.7;
           }
           if (s.speechCd <= 0) {
@@ -2243,10 +2283,11 @@ export class Game {
           const dz = s.wanderTz - s.mesh.position.z;
           const dist = Math.hypot(dx, dz);
           if (dist > 0.4) {
-            mx = dx / dist;
-            mz = dz / dist;
+            const steer = this._steer(s, s.wanderTx, s.wanderTz);
+            mx = steer.x;
+            mz = steer.z;
             moveSpeed = s.speed * 0.55;
-            s.mesh.rotation.y = Math.atan2(mx, mz);
+            if (mx || mz) s.mesh.rotation.y = Math.atan2(mx, mz);
           }
         }
       }

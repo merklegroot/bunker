@@ -227,6 +227,223 @@ export function hasLineOfSight(x0, z0, x1, z1, walls) {
   return !segmentHitsWall(x0, z0, x1, z1, walls, 0.05);
 }
 
+/**
+ * Build a coarse walkability grid (inflated by clearance for agent radius).
+ * Origin is map center; cell (0,0) is at world (-HALF, -HALF).
+ */
+export function buildNavGrid(spec, clearance = 0.55) {
+  const { MAP, HALF, CELL, walls } = spec;
+  const cols = Math.ceil(MAP / CELL);
+  const rows = Math.ceil(MAP / CELL);
+  const blocked = new Uint8Array(cols * rows);
+  for (let cz = 0; cz < rows; cz++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const wx = -HALF + (cx + 0.5) * CELL;
+      const wz = -HALF + (cz + 0.5) * CELL;
+      // Sample center + corners so thin walls still block
+      let hit = circleHitsWall(wx, wz, clearance, walls);
+      if (!hit) {
+        const o = CELL * 0.35;
+        hit = circleHitsWall(wx + o, wz + o, clearance * 0.7, walls)
+          || circleHitsWall(wx - o, wz + o, clearance * 0.7, walls)
+          || circleHitsWall(wx + o, wz - o, clearance * 0.7, walls)
+          || circleHitsWall(wx - o, wz - o, clearance * 0.7, walls);
+      }
+      if (hit) blocked[cz * cols + cx] = 1;
+    }
+  }
+  return { cols, rows, cell: CELL, half: HALF, blocked };
+}
+
+export function worldToCell(nav, x, z) {
+  const cx = Math.floor((x + nav.half) / nav.cell);
+  const cz = Math.floor((z + nav.half) / nav.cell);
+  return {
+    cx: Math.max(0, Math.min(nav.cols - 1, cx)),
+    cz: Math.max(0, Math.min(nav.rows - 1, cz)),
+  };
+}
+
+export function cellToWorld(nav, cx, cz) {
+  return {
+    x: -nav.half + (cx + 0.5) * nav.cell,
+    z: -nav.half + (cz + 0.5) * nav.cell,
+  };
+}
+
+function _navWalkable(nav, cx, cz) {
+  if (cx < 0 || cz < 0 || cx >= nav.cols || cz >= nav.rows) return false;
+  return nav.blocked[cz * nav.cols + cx] === 0;
+}
+
+/** Nearest walkable cell to a world point (spiral search). */
+export function nearestWalkable(nav, x, z) {
+  let { cx, cz } = worldToCell(nav, x, z);
+  if (_navWalkable(nav, cx, cz)) return { cx, cz };
+  for (let r = 1; r <= 8; r++) {
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+        if (_navWalkable(nav, cx + dx, cz + dz)) return { cx: cx + dx, cz: cz + dz };
+      }
+    }
+  }
+  return { cx, cz };
+}
+
+/**
+ * A* on the nav grid. Returns world-space waypoints (excluding start), or null.
+ */
+export function findPath(nav, x0, z0, x1, z1) {
+  if (!nav) return null;
+  const start = nearestWalkable(nav, x0, z0);
+  const goal = nearestWalkable(nav, x1, z1);
+  if (start.cx === goal.cx && start.cz === goal.cz) {
+    return [{ x: x1, z: z1 }];
+  }
+
+  const cols = nav.cols;
+  const rows = nav.rows;
+  const N = cols * rows;
+  const came = new Int32Array(N).fill(-1);
+  const gScore = new Float32Array(N).fill(Infinity);
+  const fScore = new Float32Array(N).fill(Infinity);
+  const closed = new Uint8Array(N);
+  const open = [];
+
+  const idx = (cx, cz) => cz * cols + cx;
+  const heur = (cx, cz) => {
+    const dx = Math.abs(cx - goal.cx);
+    const dz = Math.abs(cz - goal.cz);
+    return Math.max(dx, dz) + Math.min(dx, dz) * 0.414; // octile
+  };
+
+  const s = idx(start.cx, start.cz);
+  gScore[s] = 0;
+  fScore[s] = heur(start.cx, start.cz);
+  open.push(s);
+
+  const neigh = [
+    [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+    [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414],
+  ];
+
+  let found = -1;
+  let guard = N * 4;
+  while (open.length && guard-- > 0) {
+    // Pop lowest f
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) {
+      if (fScore[open[i]] < fScore[open[bi]]) bi = i;
+    }
+    const cur = open[bi];
+    open[bi] = open[open.length - 1];
+    open.pop();
+    if (closed[cur]) continue;
+    closed[cur] = 1;
+
+    const ccx = cur % cols;
+    const ccz = (cur / cols) | 0;
+    if (ccx === goal.cx && ccz === goal.cz) {
+      found = cur;
+      break;
+    }
+
+    for (const [dx, dz, cost] of neigh) {
+      const nx = ccx + dx;
+      const nz = ccz + dz;
+      if (!_navWalkable(nav, nx, nz)) continue;
+      // No corner-cutting through blocked diagonals
+      if (dx !== 0 && dz !== 0) {
+        if (!_navWalkable(nav, ccx + dx, ccz) || !_navWalkable(nav, ccx, ccz + dz)) continue;
+      }
+      const ni = idx(nx, nz);
+      if (closed[ni]) continue;
+      const tent = gScore[cur] + cost;
+      if (tent >= gScore[ni]) continue;
+      came[ni] = cur;
+      gScore[ni] = tent;
+      fScore[ni] = tent + heur(nx, nz);
+      open.push(ni);
+    }
+  }
+
+  if (found < 0) return null;
+
+  const cells = [];
+  for (let c = found; c >= 0; c = came[c]) cells.push(c);
+  cells.reverse();
+
+  const path = [];
+  for (let i = 1; i < cells.length; i++) {
+    const c = cells[i];
+    const w = cellToWorld(nav, c % cols, (c / cols) | 0);
+    path.push(w);
+  }
+  // Snap final waypoint toward actual goal
+  path.push({ x: x1, z: z1 });
+  return path;
+}
+
+/**
+ * Steering toward a goal: straight if LOS, else follow A* waypoints.
+ * Mutates `state` ({ path, i, goalX, goalZ, until }).
+ * Returns { x, z } unit direction (or zeros).
+ */
+export function steerTo(nav, walls, x, z, tx, tz, state, time) {
+  const dx = tx - x;
+  const dz = tz - z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.15) return { x: 0, z: 0 };
+
+  if (hasLineOfSight(x, z, tx, tz, walls)) {
+    state.path = null;
+    state.i = 0;
+    return { x: dx / dist, z: dz / dist };
+  }
+
+  const goalMoved = !state.path
+    || Math.hypot((state.goalX ?? tx) - tx, (state.goalZ ?? tz) - tz) > 2.2
+    || time >= (state.until ?? 0);
+
+  if (goalMoved) {
+    state.path = findPath(nav, x, z, tx, tz);
+    state.i = 0;
+    state.goalX = tx;
+    state.goalZ = tz;
+    state.until = time + 0.55 + Math.random() * 0.35;
+  }
+
+  if (!state.path || state.path.length === 0) {
+    return { x: dx / dist, z: dz / dist };
+  }
+
+  // Advance past nearby / skip-ahead if LOS to later waypoint
+  while (state.i < state.path.length) {
+    const w = state.path[state.i];
+    if (Math.hypot(w.x - x, w.z - z) < 1.15) {
+      state.i += 1;
+      continue;
+    }
+    break;
+  }
+  // LOS shortcut along the path
+  while (state.i + 1 < state.path.length) {
+    const w2 = state.path[state.i + 1];
+    if (hasLineOfSight(x, z, w2.x, w2.z, walls)) state.i += 1;
+    else break;
+  }
+
+  if (state.i >= state.path.length) {
+    return { x: dx / dist, z: dz / dist };
+  }
+  const w = state.path[state.i];
+  const wx = w.x - x;
+  const wz = w.z - z;
+  const wd = Math.hypot(wx, wz) || 1;
+  return { x: wx / wd, z: wz / wd };
+}
+
 function makeMat(color, opts = {}) {
   return new THREE.MeshBasicMaterial({ color, ...opts });
 }
