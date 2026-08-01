@@ -229,9 +229,49 @@ export function setArmed(root, armed) {
   }
 }
 
-export function animatePerson(root, dt, speed, sprinting, distressed = false, freezeArms = false) {
+export function animatePerson(root, dt, speed, sprinting, distressed = false, freezeArms = false, swimming = false) {
   const rig = root.userData.rig;
   if (!rig || !rig.lLeg || !rig.rLeg || !rig.lArm || !rig.rArm) return;
+
+  // Punch owns the full body (legs, hips/torso, arms, head) — leave it alone
+  if (freezeArms) return;
+
+  if (swimming) {
+    const stroking = speed > 0.08;
+    const cadence = stroking ? 11 : 7;
+    root.userData.walk += dt * cadence * (stroking ? Math.min(1.35, 0.55 + speed / 5) : 0.65);
+    const phase = root.userData.walk;
+
+    // Flutter kick
+    const kick = stroking ? 0.62 : 0.28;
+    rig.lLeg.rotation.x = Math.sin(phase * 1.85) * kick;
+    rig.rLeg.rotation.x = Math.sin(phase * 1.85 + Math.PI) * kick;
+
+    // Freestyle / crawl arm strokes (alternating)
+    const r = phase;
+    const l = phase + Math.PI;
+    rig.rArm.rotation.x = -0.55 + Math.sin(r) * 1.35;
+    rig.lArm.rotation.x = -0.55 + Math.sin(l) * 1.35;
+    rig.rArm.rotation.z = 0.2 + Math.max(0, Math.cos(r)) * 0.75;
+    rig.lArm.rotation.z = -0.2 - Math.max(0, Math.cos(l)) * 0.75;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.35 - Math.max(0, Math.sin(r)) * 0.85;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.35 - Math.max(0, Math.sin(l)) * 0.85;
+
+    rig.torso.rotation.y = Math.sin(phase * 0.9) * 0.18;
+    rig.torso.rotation.x = 0.12;
+    rig.torso.position.y = 0.95 + Math.sin(phase * 2) * 0.05;
+    if (rig.head) {
+      // Roll face aside for air every other stroke
+      rig.head.rotation.y = Math.sin(phase * 0.5) * 0.55;
+      rig.head.rotation.x = 0.25 + Math.sin(phase) * 0.08;
+    }
+    return;
+  }
+
+  // Clear residual swim torso pitch when back on land
+  if (rig.torso.rotation.x && Math.abs(rig.torso.rotation.x) < 0.25) {
+    rig.torso.rotation.x = 0;
+  }
 
   const moving = speed > 0.15;
   const cadence = distressed ? 18 : sprinting ? 14 : 9;
@@ -240,9 +280,6 @@ export function animatePerson(root, dt, speed, sprinting, distressed = false, fr
 
   const phase = root.userData.walk;
   const amp = moving ? (distressed ? 1.05 : sprinting ? 0.85 : 0.55) : 0;
-
-  // Punch owns the full body (legs, hips/torso, arms, head) — leave it alone
-  if (freezeArms) return;
 
   rig.lLeg.rotation.x = Math.sin(phase) * amp;
   rig.rLeg.rotation.x = Math.sin(phase + Math.PI) * amp;

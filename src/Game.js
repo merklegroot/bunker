@@ -866,14 +866,31 @@ export class Game {
       this.player.position.z = this.level.waterLine + 4;
     }
 
+    const playerSwimming = this.player.position.z > this.level.waterLine;
+    if (playerSwimming) {
+      this.player.rotation.x = -1.05;
+      this.player.position.y = -0.42 + Math.sin(this.time * 3.6) * 0.05;
+    } else {
+      this.player.rotation.x = 0;
+      this.player.position.y = 0;
+    }
+
     // Face the way we're moving
     if (moving) {
       this.player.rotation.y = Math.atan2(axis.x, axis.y);
     }
 
     this._moveSpeed = moving ? speed : 0;
-    animatePerson(this.player, dt, this._moveSpeed, this.sprinting, false, this.meleeAnim > 0);
-    this._applyMeleePose(dt);
+    animatePerson(
+      this.player,
+      dt,
+      this._moveSpeed,
+      this.sprinting && !playerSwimming,
+      false,
+      this.meleeAnim > 0 && !playerSwimming,
+      playerSwimming,
+    );
+    if (!playerSwimming) this._applyMeleePose(dt);
     this._renderStamina();
 
     this.meleeCd = Math.max(0, this.meleeCd - dt);
@@ -1100,7 +1117,8 @@ export class Game {
       if (e.hpBar) e.hpBar.visible = false;
     } else {
       e.mesh.rotation.x = 0;
-      e.mesh.position.y = e.swimming ? -0.12 : 0;
+      e.mesh.position.y = e.swimming ? -0.42 : 0;
+      if (e.swimming) e.mesh.rotation.x = -1.05;
     }
   }
 
@@ -1119,7 +1137,10 @@ export class Game {
     mesh.position.set(x, 0, z);
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
     if (kindKey === 'sturdy') mesh.scale.setScalar(1.15);
-    if (opts.swimming) mesh.position.y = -0.15;
+    if (opts.swimming) {
+      mesh.position.y = -0.42;
+      mesh.rotation.x = -1.05;
+    }
 
     const hpBar = createHealthBar();
     mesh.add(hpBar);
@@ -1268,10 +1289,12 @@ export class Game {
       if (e.hitFlash > 0) setTint(e.mesh, 0xffffff);
       else clearTint(e.mesh);
 
-      // Leave water once past shore
+      // Leave water once past shore — stand back up
       if (e.swimming && e.mesh.position.z < this.level.shoreLine + 1 && e.knockdownTimer <= 0) {
         e.swimming = false;
         e.mesh.position.y = 0;
+        e.mesh.rotation.x = 0;
+        if (e.mesh.userData.rig?.torso) e.mesh.userData.rig.torso.rotation.x = 0;
       }
 
       let mx = 0;
@@ -1487,7 +1510,9 @@ export class Game {
         e.mesh.rotation.x = Math.PI / 2;
         e.mesh.position.y = 0.4;
       } else if (e.swimming) {
-        e.mesh.position.y = -0.12 + Math.sin(this.time * 4 + i) * 0.04;
+        // Prone crawl toward facing (+Z local) with a light bob
+        e.mesh.rotation.x = -1.05;
+        e.mesh.position.y = -0.42 + Math.sin(this.time * 3.6 + i) * 0.05;
       }
 
       if (!downed) {
@@ -1497,6 +1522,8 @@ export class Game {
           stunned ? 0 : moveSpeed,
           aggressive && moveSpeed > 3.5,
           (e.panicked && aggressive) || stunned,
+          false,
+          e.swimming,
         );
         updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y);
       }
