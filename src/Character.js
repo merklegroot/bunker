@@ -182,21 +182,11 @@ export function animatePerson(root, dt, speed, sprinting, distressed = false, fr
   const phase = root.userData.walk;
   const amp = moving ? (distressed ? 1.05 : sprinting ? 0.85 : 0.55) : 0;
 
+  // Punch owns the full body (legs, hips/torso, arms, head) — leave it alone
+  if (freezeArms) return;
+
   rig.lLeg.rotation.x = Math.sin(phase) * amp;
   rig.rLeg.rotation.x = Math.sin(phase + Math.PI) * amp;
-
-  // During a punch only the punching arm is posed elsewhere — leave arms alone here
-  if (freezeArms) {
-    if (rig.head) {
-      rig.head.rotation.y = 0;
-      rig.head.rotation.x = 0;
-    }
-    if (!distressed) {
-      rig.torso.rotation.y = 0;
-      rig.torso.position.y = 0.95;
-    }
-    return;
-  }
 
   if (distressed) {
     // Flailing / screaming panic

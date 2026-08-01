@@ -31,7 +31,7 @@ const AGGRO_DURATION = 6.5;
 const WITNESS_RANGE = 11;
 const MELEE_RANGE = 1.9;
 const MELEE_COOLDOWN = 0.26;
-const MELEE_ANIM = 0.26;
+const MELEE_ANIM = 0.34;
 const MELEE_KNOCK_SPEED = 8.5;
 const MELEE_KNOCK_DECAY = 7.5;
 const PUNCH_LUNGE_SPEED = 6.2;
@@ -704,6 +704,10 @@ export class Game {
     }
   }
 
+  /**
+   * Full-body jab/cross: ground → drive leg → hip/torso → shoulder → fist.
+   * Body leads; arm catches up; guard hand stays up; retract on the same line.
+   */
   _applyMeleePose(dt) {
     const rig = this.player.userData.rig;
     if (!rig?.rArm || !rig?.lArm) return;
@@ -711,6 +715,12 @@ export class Game {
       if (rig.torso) {
         rig.torso.rotation.y = 0;
         rig.torso.rotation.x = 0;
+        rig.torso.rotation.z = 0;
+        rig.torso.position.y = 0.95;
+      }
+      if (rig.head) {
+        rig.head.rotation.x = 0;
+        rig.head.rotation.y = 0;
       }
       return;
     }
@@ -722,9 +732,38 @@ export class Game {
     const guardArm = side > 0 ? rig.lArm : rig.rArm;
     const punchElbow = side > 0 ? rig.rElbow : rig.lElbow;
     const guardElbow = side > 0 ? rig.lElbow : rig.rElbow;
+    const driveLeg = side > 0 ? rig.rLeg : rig.lLeg;
+    const plantLeg = side > 0 ? rig.lLeg : rig.rLeg;
 
-    // Impact near full extension
-    if (this.lungeArmed && t >= 0.38) {
+    // Envelope: ease in to peak, brief hold through impact, smooth recover
+    const env = (peakAt) => {
+      if (t < peakAt) {
+        const u = t / peakAt;
+        return u * u;
+      }
+      const hold = peakAt + 0.06;
+      if (t < hold) return 1;
+      const u = (t - hold) / Math.max(0.001, 1 - hold);
+      return 1 - u * u * (3 - 2 * u);
+    };
+
+    // Proximal→distal: hips/torso peak first, arm slightly later
+    const body = env(0.28);
+    const armDelay = Math.max(0, (t - 0.05) / 0.95);
+    const arm = (() => {
+      const peakAt = 0.34;
+      if (armDelay < peakAt) {
+        const u = armDelay / peakAt;
+        return u * u;
+      }
+      const hold = peakAt + 0.06;
+      if (armDelay < hold) return 1;
+      const u = (armDelay - hold) / Math.max(0.001, 1 - hold);
+      return 1 - u * u * (3 - 2 * u);
+    })();
+
+    // Impact when fist is near full extension (after body has turned in)
+    if (this.lungeArmed && t >= 0.4) {
       this.lungeX = this.lungeDirX * PUNCH_LUNGE_SPEED;
       this.lungeZ = this.lungeDirZ * PUNCH_LUNGE_SPEED;
       this.lungeArmed = false;
@@ -746,44 +785,36 @@ export class Game {
       }
     }
 
-    // Single straight jab: drive forward, then retract on the same path
-    // (no side wind-up / side recover — that read as two swings)
-    let shX;
-    let shZ;
-    let elX;
-    if (t < 0.42) {
-      // Extend — ease-in so the snap reads at the end
-      const u = t / 0.42;
-      const extend = u * u;
-      shX = 0.12 - extend * 1.72; // hang → horizontal punch (~-1.6)
-      shZ = side * 0.12 * (1 - extend);
-      elX = -0.5 + extend * 0.4; // bent → nearly straight
-    } else {
-      // Retract — same line back to the side
-      const u = (t - 0.42) / 0.58;
-      const retract = u * u * (3 - 2 * u); // smoothstep
-      shX = -1.6 + retract * 1.72;
-      shZ = side * 0.12 * retract;
-      elX = -0.1 - retract * 0.4;
-    }
+    // Legs: drive foot loads then pushes; plant foot takes weight forward
+    if (driveLeg) driveLeg.rotation.x = -0.42 * body;
+    if (plantLeg) plantLeg.rotation.x = 0.28 * body;
 
-    punchArm.rotation.x = shX;
-    punchArm.rotation.y = 0;
-    punchArm.rotation.z = shZ;
-    if (punchElbow) punchElbow.rotation.x = elX;
-
-    // Other arm stays completely still at the side — do not animate it
-    guardArm.rotation.x = 0.15;
-    guardArm.rotation.y = 0;
-    guardArm.rotation.z = -side * 0.08;
-    if (guardElbow) guardElbow.rotation.x = -0.45;
-
-    // No torso twist — arms are parented to torso, so twist would swing both
+    // Hips/shoulders: punch-side shoulder comes forward; slight lean + crouch
     if (rig.torso) {
-      rig.torso.rotation.y = 0;
-      rig.torso.rotation.x = 0;
-      rig.torso.position.y = 0.95;
+      rig.torso.rotation.y = -side * 0.58 * body;
+      // Positive X pitches toward +Z (facing), i.e. lean into the punch
+      rig.torso.rotation.x = 0.18 * body;
+      rig.torso.rotation.z = side * 0.06 * body;
+      rig.torso.position.y = 0.95 - 0.05 * body;
     }
+
+    // Chin tucks behind the punching shoulder
+    if (rig.head) {
+      rig.head.rotation.y = -side * 0.18 * body;
+      rig.head.rotation.x = 0.1 * body;
+    }
+
+    // Fist: hang → straight line, palm-down snap (internal rotation), retract same path
+    punchArm.rotation.x = 0.12 - arm * 1.72;
+    punchArm.rotation.y = -side * 0.4 * arm;
+    punchArm.rotation.z = side * (0.14 * (1 - arm) + 0.04);
+    if (punchElbow) punchElbow.rotation.x = -0.55 + arm * 0.5;
+
+    // Rear hand stays in a high guard (not a second punch)
+    guardArm.rotation.x = -0.95 - 0.12 * body;
+    guardArm.rotation.y = side * 0.22;
+    guardArm.rotation.z = -side * 0.48;
+    if (guardElbow) guardElbow.rotation.x = -1.05;
   }
 
   _meleeSwing(dirX, dirZ) {
