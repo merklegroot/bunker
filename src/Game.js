@@ -24,8 +24,8 @@ const PLAYER_RADIUS = 0.4;
 const MAX_HP = 6;
 const HP_REGEN_DELAY = 3.0;
 const HP_REGEN_RATE = 0.22; // hearts per second after delay
-const VIEW_NEAR = 14;
-const VIEW_FAR = 32;
+const VIEW_NEAR = 10;
+const VIEW_FAR = 24;
 const BULLET_KNOCKBACK = 0.28;
 const BREACH_LIMIT = 12;
 const AGGRO_DURATION = 6.5;
@@ -155,8 +155,30 @@ const INVADER_BREACH_LINES = [
 
 const SPAIN_SKINS = [0xd4b08a, 0xc4a070, 0xb89068, 0xdbc4a0];
 const SPAIN_HAIR = [0x1a120e, 0x3a2818, 0x5a3a20, 0x2a1c14, 0x6a5030];
-const SPAIN_SHIRTS = [0xe8e0d4, 0xc45c48, 0x3a5a7a, 0xe8c84a, 0x2a6a5a, 0xf0ece4];
-const SPAIN_PANTS = [0x2a3540, 0x3a4550, 0x4a3a30, 0x1a3048, 0x5a5048];
+// No Moroccan flag greens / crimson — mostly yellow, white, blue (red rare)
+const SPAIN_SHIRTS = [
+  0xf0ece4, // white
+  0xe8e0d4, // cream
+  0xe8c84a, // Spanish yellow
+  0xf0b429, // gold
+  0x2a4a6a, // navy
+  0x4a7a9a, // sky blue
+  0x5a6a7a, // slate
+  0x3a5a78, // steel blue
+  0xd8c8a0, // sand
+];
+const SPAIN_PANTS = [0x2a3540, 0x3a4550, 0x4a3a30, 0x1a3048, 0x5a5048, 0x2a2a38];
+const SPAIN_SHIRTS_F = [
+  0xf0ece4,
+  0xe8e0d4,
+  0xe8c84a,
+  0xf0b429,
+  0x6a8ab0, // blue
+  0x5a6a9a, // periwinkle
+  0xe8a070, // peach
+  0xd8b8c8, // pale lilac
+  0xd87890, // soft pink (occasional)
+];
 
 const COL = {
   blood: 0x8a3030,
@@ -227,12 +249,9 @@ function spainClothes(female = false) {
   const hair = female
     ? randPick([0x1a120e, 0x3a2818, 0x5a3a20, 0x6a5030, 0x8a6040, 0xc4a060])
     : randPick(SPAIN_HAIR);
-  const shirt = female
-    ? randPick([0xe8e0d4, 0xc45c48, 0xe8c84a, 0xf0ece4, 0xd87890, 0x6a8ab0, 0xe8a070])
-    : randPick(SPAIN_SHIRTS);
   return {
     skin: randPick(SPAIN_SKINS),
-    shirt,
+    shirt: randPick(female ? SPAIN_SHIRTS_F : SPAIN_SHIRTS),
     pants: randPick(SPAIN_PANTS),
     boot: Math.random() < 0.5 ? 0x2a2420 : 0x1a1814,
     hair,
@@ -387,7 +406,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 160);
-    this._camOffset = new THREE.Vector3(0, 23, 17);
+    this._camOffset = new THREE.Vector3(0, 18, 13);
     this.camera.position.copy(this._camOffset);
     this.camera.lookAt(0, 0, 0);
 
@@ -602,7 +621,7 @@ export class Game {
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     const aspect = w / Math.max(1, h);
-    const viewH = 18.5;
+    const viewH = 13.5;
     const viewW = viewH * aspect;
     this.camera.left = -viewW / 2;
     this.camera.right = viewW / 2;
@@ -995,8 +1014,9 @@ export class Game {
     if (plantLeg) plantLeg.rotation.x = 0.28 * body;
 
     // Hips/shoulders: punch-side shoulder comes forward; slight lean + crouch
+    const torsoYaw = -side * 0.58 * body;
     if (rig.torso) {
-      rig.torso.rotation.y = -side * 0.58 * body;
+      rig.torso.rotation.y = torsoYaw;
       // Positive X pitches toward +Z (facing), i.e. lean into the punch
       rig.torso.rotation.x = 0.38 * body;
       rig.torso.rotation.z = side * 0.06 * body;
@@ -1015,11 +1035,12 @@ export class Game {
     punchArm.rotation.z = side * (0.14 * (1 - arm) + 0.04);
     if (punchElbow) punchElbow.rotation.x = -0.55 + arm * 0.5;
 
-    // Rear hand stays in a high guard (not a second punch)
-    guardArm.rotation.x = -0.95 - 0.12 * body;
-    guardArm.rotation.y = side * 0.22;
-    guardArm.rotation.z = -side * 0.48;
-    if (guardElbow) guardElbow.rotation.x = -1.05;
+    // Guard arm: locked local pose + cancel torso yaw so it doesn't swing with the twist
+    // (arms are parented to torso)
+    guardArm.rotation.x = -0.85;
+    guardArm.rotation.y = -torsoYaw;
+    guardArm.rotation.z = -side * 0.35;
+    if (guardElbow) guardElbow.rotation.x = -0.95;
   }
 
   _meleeSwing(dirX, dirZ) {
