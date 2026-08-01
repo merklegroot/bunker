@@ -3,7 +3,7 @@ import { Input } from './Input.js';
 import { Sfx } from './Audio.js';
 import {
   createPerson, animatePerson, setTint, clearTint, setArmed,
-  createHealthBar, updateHealthBar,
+  createHealthBar, updateHealthBar, detachBodyParts,
 } from './Character.js';
 import {
   buildLevelSpec,
@@ -33,8 +33,8 @@ const WITNESS_RANGE = 11;
 const MELEE_RANGE = 1.9;
 const MELEE_COOLDOWN = 0.26;
 const MELEE_ANIM = 0.34;
-const MELEE_KNOCK_SPEED = 8.5;
-const MELEE_KNOCK_DECAY = 7.5;
+const MELEE_KNOCK_SPEED = 18;
+const MELEE_KNOCK_DECAY = 5.2;
 const PUNCH_LUNGE_SPEED = 6.2;
 const PUNCH_LUNGE_DECAY = 10;
 const PLAYER_KNOCK_SPEED = 7.5;
@@ -46,6 +46,8 @@ const COMBO_WINDOW = 1.8;
 const SPANIARD_FEAR_TIME = 5.5;
 const SPANIARD_GREET_RANGE = 7.5;
 const CIV_HUNT_RANGE = 12;
+const TEAR_DURATION = 1.7;
+const HOLD_DURATION = 5.5;
 
 const WELCOME_LINES = [
   // Spanish
@@ -644,6 +646,8 @@ export class Game {
     this._updateBoats(dt);
     this._updateEnemies(dt);
     this._updateSpaniards(dt);
+    this._updateHoldings(dt);
+    this._updateTearings(dt);
     this._updateFx(dt);
     this._updateSpeechBubbles();
     this._updateCamera();
@@ -970,6 +974,13 @@ export class Game {
         if (hits > 0) {
           this.shake = Math.min(0.7, this.shake + 0.22 * hits);
           this.sfx.punchHit({ hard: hits > 1 });
+          this._bloodSpray(
+            this.player.position.x + dirX * 0.9,
+            this.player.position.z + dirZ * 0.9,
+            dirX,
+            dirZ,
+            { mild: true },
+          );
         } else {
           this.sfx.punchMiss();
         }
@@ -1034,9 +1045,9 @@ export class Game {
     }
 
     const willDown = e.knockdownTimer <= 0 && e.comboHits >= PUNCHES_TO_DOWN;
-    const knock = willDown ? MELEE_KNOCK_SPEED * 1.45 : MELEE_KNOCK_SPEED * 0.85;
+    const knock = willDown ? MELEE_KNOCK_SPEED * 1.35 : MELEE_KNOCK_SPEED;
 
-    this._damageEnemy(index, damage, dirX, dirZ, knock);
+    this._damageEnemy(index, damage, dirX, dirZ, knock, { fromPunch: true });
     // May have been killed and removed
     if (!this.enemies.includes(e)) return true;
 
@@ -1121,6 +1132,8 @@ export class Game {
       civHuntTimer: 0,
       speechCd: 1.5 + Math.random() * 3,
       speechLife: 0,
+      tearing: null,
+      holding: null,
     });
   }
 
@@ -1155,7 +1168,7 @@ export class Game {
     }
   }
 
-  _damageEnemy(index, damage, dirX = 0, dirZ = 0, knockSpeed = 0) {
+  _damageEnemy(index, damage, dirX = 0, dirZ = 0, knockSpeed = 0, opts = {}) {
     const e = this.enemies[index];
     if (!e) return;
     e.hp -= damage;
@@ -1174,7 +1187,7 @@ export class Game {
         this._knockback(e.mesh, e.r, dirX, dirZ, BULLET_KNOCKBACK);
       }
     }
-    if (e.hp <= 0) this._killEnemy(index);
+    if (e.hp <= 0) this._killEnemy(index, { fromPunch: !!opts.fromPunch, dirX, dirZ });
   }
 
   _updateEnemies(dt) {
@@ -1222,10 +1235,12 @@ export class Game {
       let moveSpeed = 0;
       const downed = e.knockdownTimer > 0;
       const stunned = e.stunTimer > 0;
-      const aggressive = !downed && !stunned && e.aggroTimer > 0 && this.playerAlive;
+      const tearing = !!e.tearing;
+      const holding = !!e.holding;
+      const aggressive = !downed && !stunned && !tearing && !holding && e.aggroTimer > 0 && this.playerAlive;
 
-      if (downed || stunned) {
-        // No AI — only knockback shove below
+      if (downed || stunned || tearing || holding) {
+        // No AI — knockback only (hold/tear posing happens in dedicated updates)
         mx = 0;
         mz = 0;
       } else if (aggressive) {
@@ -1256,51 +1271,64 @@ export class Game {
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
           if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
         }
-      } else if (!downed && !stunned && e.civTarget) {
-        // Divert to punch a Spaniard
+      } else if (!downed && !stunned && !tearing && !holding && e.civTarget) {
+        // Divert to punch / grab a Spaniard
         const s = e.civTarget;
-        const dx = s.mesh.position.x - e.mesh.position.x;
-        const dz = s.mesh.position.z - e.mesh.position.z;
-        const dist = Math.hypot(dx, dz) || 1;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        e.mesh.rotation.y = Math.atan2(nx, nz);
-
-        const punchReach = e.r + s.r + 0.45;
-        const holdDist = punchReach - 0.15;
-        if (dist > holdDist + 0.1) {
-          mx = nx;
-          mz = nz;
-        } else if (dist < holdDist - 0.12) {
-          mx = -nx;
-          mz = -nz;
-        } else {
+        if (s.tearing || s.heldBy === e) {
           mx = 0;
           mz = 0;
-        }
+        } else {
+          const dx = s.mesh.position.x - e.mesh.position.x;
+          const dz = s.mesh.position.z - e.mesh.position.z;
+          const dist = Math.hypot(dx, dz) || 1;
+          const nx = dx / dist;
+          const nz = dz / dist;
+          e.mesh.rotation.y = Math.atan2(nx, nz);
 
-        if (e.biteCd <= 0 && dist < punchReach) {
-          e.biteCd = 0.55 + Math.random() * 0.25;
-          this._hurtSpaniard(s, e.damage, nx, nz);
-          this._spark(s.mesh.position.x, s.mesh.position.z, COL.blood, 5, 0.25, 1.0);
-          if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+          const punchReach = e.r + s.r + 0.45;
+          const holdDist = punchReach - 0.15;
+          if (dist > holdDist + 0.1) {
+            mx = nx;
+            mz = nz;
+          } else if (dist < holdDist - 0.12) {
+            mx = -nx;
+            mz = -nz;
+          } else {
+            mx = 0;
+            mz = 0;
+          }
+
+          if (e.biteCd <= 0 && dist < punchReach) {
+            e.biteCd = 0.55 + Math.random() * 0.25;
+            // Second invader arrives while someone is already holding → start tear
+            if (s.heldBy && s.heldBy !== e && !s.tearing) {
+              this._beginTearSpaniard(s);
+            } else if (!s.heldBy && !s.tearing && this._countSwarmOn(s, 3.2) < 2 && Math.random() < 0.5) {
+              this._beginHoldCivilian(e, s);
+            } else if (!s.heldBy) {
+              this._hurtSpaniard(s, e.damage, nx, nz);
+              this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
+              if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+            }
+          }
         }
-      } else {
+      } else if (!tearing && !holding) {
         // Push for the city gate — often pick on a nearby Spaniard
         if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
           e.civHuntCd = 0.7 + Math.random() * 1.1;
           let nearest = null;
           let nearestD = CIV_HUNT_RANGE;
+          // Prefer civilians already being held (backup for a pull-apart)
           for (const s of this.spaniards) {
-            if (s.hp <= 0) continue;
+            if (s.hp <= 0 || s.tearing) continue;
             const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
-            if (d < nearestD) {
-              nearestD = d;
+            const score = s.heldBy ? d * 0.45 : d;
+            if (score < nearestD) {
+              nearestD = score;
               nearest = s;
             }
           }
-          // Closer = almost always attack; farther still often
-          const p = nearestD < 5 ? 0.9 : 0.72;
+          const p = nearest?.heldBy ? 0.95 : (nearestD < 5 ? 0.9 : 0.72);
           if (nearest && Math.random() < p) {
             e.civTarget = nearest;
             e.civHuntTimer = 10 + Math.random() * 6;
@@ -1450,6 +1478,9 @@ export class Game {
     setArmed(mesh, false);
     mesh.position.set(x, 0, z);
     mesh.rotation.y = Math.random() * Math.PI * 2;
+
+    const hpBar = createHealthBar();
+    mesh.add(hpBar);
     this.world.add(mesh);
 
     const bubble = document.createElement('div');
@@ -1458,6 +1489,7 @@ export class Game {
 
     this.spaniards.push({
       mesh,
+      hpBar,
       bubble,
       female,
       r: female ? 0.34 : 0.36,
@@ -1478,6 +1510,10 @@ export class Game {
       hitFlash: 0,
       fleeX: 0,
       fleeZ: 1,
+      pullPressure: 0,
+      tearing: null,
+      heldBy: null,
+      holdTimer: 0,
     });
   }
 
@@ -1491,23 +1527,34 @@ export class Game {
   }
 
   _hurtSpaniard(s, damage, dirX = 0, dirZ = 0, opts = {}) {
-    if (!s || s.hp <= 0) return;
+    if (!s || s.hp <= 0 || s.tearing) return;
+    // Being held — still take damage but no flee knockback
+    const held = !!s.heldBy;
     s.hp -= damage;
     s.hitFlash = 0.14;
     s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
-    s.fleeX = dirX;
-    s.fleeZ = dirZ;
-    const len = Math.hypot(dirX, dirZ) || 1;
-    const knock = opts.fromPlayer ? MELEE_KNOCK_SPEED * 0.75 : PLAYER_KNOCK_SPEED * 0.85;
-    s.kbx = (dirX / len) * knock;
-    s.kbz = (dirZ / len) * knock;
+    if (!held) {
+      s.fleeX = dirX;
+      s.fleeZ = dirZ;
+      const len = Math.hypot(dirX, dirZ) || 1;
+      const knock = opts.fromPlayer ? MELEE_KNOCK_SPEED * 1.05 : PLAYER_KNOCK_SPEED * 0.85;
+      s.kbx = (dirX / len) * knock;
+      s.kbz = (dirZ / len) * knock;
+    } else {
+      s.kbx = 0;
+      s.kbz = 0;
+    }
     this._saySpaniard(s, randPick(FEAR_LINES), true);
     if (!opts.fromPlayer) this.sfx.playerHurt();
+    updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
+    if (opts.fromPlayer) {
+      this._bloodSpray(s.mesh.position.x, s.mesh.position.z, dirX, dirZ, { mild: true });
+    }
 
     // Nearby invaders join in on the victim (not when the player struck them)
     if (!opts.fromPlayer) {
       for (const e of this.enemies) {
-        if (e.aggroTimer > 0 || e.knockdownTimer > 0) continue;
+        if (e.aggroTimer > 0 || e.knockdownTimer > 0 || e.tearing || e.holding) continue;
         const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
         if (d > 8) continue;
         if (e.civTarget === s) {
@@ -1519,17 +1566,508 @@ export class Game {
           e.civHuntTimer = 8 + Math.random() * 4;
         }
       }
+
+      // Two+ invaders in melee can start a pull-apart
+      const swarm = this._countSwarmOn(s, 3.1);
+      if (swarm >= 2 && !s.tearing) {
+        s.pullPressure = (s.pullPressure || 0) + 1;
+        if (s.pullPressure >= 2 || (s.hp <= 2 && Math.random() < 0.55) || Math.random() < 0.28) {
+          this._beginTearSpaniard(s);
+          return;
+        }
+      }
     }
 
     if (s.hp <= 0) {
-      this._killSpaniard(s);
+      this._killSpaniard(s, { fromPunch: !!opts.fromPlayer, dirX, dirZ });
     }
   }
 
-  _killSpaniard(s) {
+  _countSwarmOn(s, range) {
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing) continue;
+      const targeting = e.civTarget === s || e.holding === s;
+      if (!targeting) continue;
+      const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+      if (d <= range) n += 1;
+    }
+    return n;
+  }
+
+  /** Solo invader pins a civilian and calls for backup to pull them apart. */
+  _beginHoldCivilian(holder, s) {
+    if (!holder || !s || s.tearing || s.heldBy || holder.holding || holder.tearing) return;
+    s.heldBy = holder;
+    s.holdTimer = HOLD_DURATION;
+    s.kbx = 0;
+    s.kbz = 0;
+    s.fearTimer = HOLD_DURATION;
+    holder.holding = s;
+    holder.civTarget = s;
+    holder.civHuntTimer = HOLD_DURATION + 1;
+    holder.kbx = 0;
+    holder.kbz = 0;
+    this._saySpaniard(s, randPick(FEAR_LINES), true);
+    this._sayInvader(holder, randPick(INVADER_CIV_LINES));
+    this._callHelpForHold(s, holder);
+  }
+
+  _callHelpForHold(s, holder) {
+    for (const e of this.enemies) {
+      if (e === holder || e.tearing || e.holding || e.knockdownTimer > 0) continue;
+      const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+      if (d > 20) continue;
+      // Drop gate trek and come help
+      if (!e.civTarget || e.civTarget === s || Math.random() < 0.75) {
+        e.civTarget = s;
+        e.civHuntTimer = Math.max(e.civHuntTimer, 9);
+        if (d < 12 && Math.random() < 0.35) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+      }
+    }
+  }
+
+  _releaseHold(s) {
+    if (!s?.heldBy) return;
+    const h = s.heldBy;
+    if (h.holding === s) h.holding = null;
+    s.heldBy = null;
+    s.holdTimer = 0;
+    s.mesh.position.y = 0;
+    s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
+  }
+
+  _updateHoldings(dt) {
+    for (let i = this.spaniards.length - 1; i >= 0; i--) {
+      const s = this.spaniards[i];
+      if (!s.heldBy || s.tearing) continue;
+
+      s.holdTimer = Math.max(0, s.holdTimer - dt);
+      const holder = s.heldBy;
+      const holderOk = this.enemies.includes(holder) && holder.hp > 0 && !holder.knockdownTimer;
+
+      if (!holderOk || s.holdTimer <= 0) {
+        this._releaseHold(s);
+        continue;
+      }
+
+      // Second invader in range → start the pull-apart
+      if (this._countSwarmOn(s, 3.2) >= 2) {
+        this._beginTearSpaniard(s);
+        continue;
+      }
+
+      // Pin civilian in front of holder
+      const hx = holder.mesh.position.x;
+      const hz = holder.mesh.position.z;
+      const facing = holder.mesh.rotation.y;
+      const fx = Math.sin(facing);
+      const fz = Math.cos(facing);
+      s.mesh.position.x = hx + fx * 0.75;
+      s.mesh.position.z = hz + fz * 0.75;
+      s.mesh.position.y = 0.35 + Math.sin(this.time * 8) * 0.03;
+      s.mesh.rotation.y = facing + Math.PI;
+      s.kbx = 0;
+      s.kbz = 0;
+
+      // Holder grab pose
+      holder.mesh.position.y = 0;
+      const rig = holder.mesh.userData.rig;
+      if (rig?.lArm && rig?.rArm) {
+        rig.lArm.rotation.x = -1.2;
+        rig.rArm.rotation.x = -1.2;
+        rig.lArm.rotation.z = -0.25;
+        rig.rArm.rotation.z = 0.25;
+        if (rig.lElbow) rig.lElbow.rotation.x = -0.4;
+        if (rig.rElbow) rig.rElbow.rotation.x = -0.4;
+      }
+      // Victim struggle
+      const vrig = s.mesh.userData.rig;
+      if (vrig?.lArm && vrig?.rArm) {
+        const flail = Math.sin(this.time * 12) * 0.45;
+        vrig.lArm.rotation.x = -0.8 + flail;
+        vrig.rArm.rotation.x = -0.8 - flail;
+        vrig.lArm.rotation.z = -0.5;
+        vrig.rArm.rotation.z = 0.5;
+      }
+
+      if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
+      // Periodically yell for more help
+      if (Math.random() < dt * 0.35) this._callHelpForHold(s, holder);
+
+      if (s.hpBar) updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
+    }
+  }
+
+  _pickTearPair(s) {
+    const candidates = [];
+    for (const e of this.enemies) {
+      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing) continue;
+      const targeting = e.civTarget === s || e.holding === s;
+      if (!targeting) continue;
+      const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+      if (d <= 3.8) candidates.push(e);
+    }
+    // Always include the holder if present
+    if (s.heldBy && this.enemies.includes(s.heldBy) && !candidates.includes(s.heldBy)) {
+      candidates.push(s.heldBy);
+    }
+    if (candidates.length < 2) return null;
+    let best = null;
+    let bestD = -1;
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = i + 1; j < candidates.length; j++) {
+        const d = Math.hypot(
+          candidates[i].mesh.position.x - candidates[j].mesh.position.x,
+          candidates[i].mesh.position.z - candidates[j].mesh.position.z,
+        );
+        if (d > bestD) {
+          bestD = d;
+          best = [candidates[i], candidates[j]];
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Start a 1–2s lift-and-stretch pull-apart by two invaders. */
+  _beginTearSpaniard(s) {
+    if (!s || s.tearing || s.hp <= 0) return;
+    const pair = this._pickTearPair(s);
+    if (!pair) return;
+    const [a, b] = pair;
+
+    // Clear hold state into tear
+    if (s.heldBy) {
+      if (s.heldBy.holding === s) s.heldBy.holding = null;
+      s.heldBy = null;
+      s.holdTimer = 0;
+    }
+    if (a.holding === s) a.holding = null;
+    if (b.holding === s) b.holding = null;
+
+    let ax = b.mesh.position.x - a.mesh.position.x;
+    let az = b.mesh.position.z - a.mesh.position.z;
+    let al = Math.hypot(ax, az);
+    if (al < 0.15) {
+      const ang = Math.random() * Math.PI * 2;
+      ax = Math.cos(ang);
+      az = Math.sin(ang);
+      al = 1;
+    }
+    ax /= al;
+    az /= al;
+
+    const sx = s.mesh.scale.x;
+    const sy = s.mesh.scale.y;
+    const sz = s.mesh.scale.z;
+
+    s.tearing = {
+      t: 0,
+      dur: TEAR_DURATION,
+      a,
+      b,
+      ax,
+      az,
+      cx: s.mesh.position.x,
+      cz: s.mesh.position.z,
+      sx,
+      sy,
+      sz,
+    };
+    s.kbx = 0;
+    s.kbz = 0;
+    s.fearTimer = TEAR_DURATION + 1;
+    a.tearing = s;
+    b.tearing = s;
+    a.kbx = 0;
+    a.kbz = 0;
+    b.kbx = 0;
+    b.kbz = 0;
+    a.civHuntTimer = TEAR_DURATION + 1;
+    b.civHuntTimer = TEAR_DURATION + 1;
+
+    this._saySpaniard(s, randPick(FEAR_LINES), true);
+    this._sayInvader(a, randPick(INVADER_CIV_LINES));
+    if (Math.random() < 0.7) this._sayInvader(b, randPick(INVADER_CIV_LINES));
+    this._bloodSpray(s.mesh.position.x, s.mesh.position.z, ax, az, { mild: false });
+  }
+
+  _updateTearings(dt) {
+    for (let i = this.spaniards.length - 1; i >= 0; i--) {
+      const s = this.spaniards[i];
+      if (!s.tearing) continue;
+      const T = s.tearing;
+      T.t += dt;
+      const u = Math.min(1, T.t / T.dur);
+
+      const aOk = this.enemies.includes(T.a) && T.a.hp > 0;
+      const bOk = this.enemies.includes(T.b) && T.b.hp > 0;
+      if (!aOk || !bOk) {
+        this._cancelTear(s);
+        continue;
+      }
+
+      // Ease curves: lift early, stretch through mid, snap at end
+      const liftU = u < 0.18 ? (u / 0.18) * (u / 0.18) : 1;
+      const stretchU = u < 0.12 ? 0 : Math.min(1, (u - 0.12) / 0.72);
+      const stretchEase = stretchU * stretchU * (3 - 2 * stretchU);
+      const pullOut = 0.55 + stretchEase * 1.55;
+      const lift = liftU * 0.95;
+
+      // Hold attackers on opposite sides; they lean back as the stretch grows
+      const a = T.a;
+      const b = T.b;
+      a.mesh.position.x = T.cx - T.ax * pullOut;
+      a.mesh.position.z = T.cz - T.az * pullOut;
+      a.mesh.position.y = 0;
+      b.mesh.position.x = T.cx + T.ax * pullOut;
+      b.mesh.position.z = T.cz + T.az * pullOut;
+      b.mesh.position.y = 0;
+      a.mesh.rotation.y = Math.atan2(T.ax, T.az);
+      b.mesh.rotation.y = Math.atan2(-T.ax, -T.az);
+      a.mesh.rotation.x = 0;
+      b.mesh.rotation.x = 0;
+
+      // Pulling pose — arms out toward the victim
+      this._posePuller(a, 1);
+      this._posePuller(b, -1);
+
+      // Victim held between them, stretched along the pull axis
+      const stretch = 1 + stretchEase * 1.75;
+      s.mesh.position.set(T.cx, lift, T.cz);
+      // Align local +X with pull axis so non-uniform scale stretches sideways
+      s.mesh.rotation.y = Math.atan2(T.ax, T.az) - Math.PI / 2;
+      s.mesh.rotation.x = Math.sin(this.time * 18) * 0.04 * stretchEase;
+      s.mesh.scale.set(T.sx * stretch, T.sy * (1 - stretchEase * 0.12), T.sz * (1 - stretchEase * 0.08));
+
+      if (s.hpBar) s.hpBar.visible = false;
+
+      // Struggle flail
+      const rig = s.mesh.userData.rig;
+      if (rig?.lArm && rig?.rArm) {
+        const flail = Math.sin(this.time * 14) * 0.5;
+        rig.lArm.rotation.x = -1.2 + flail;
+        rig.rArm.rotation.x = -1.2 - flail;
+        rig.lArm.rotation.z = -0.6;
+        rig.rArm.rotation.z = 0.6;
+        if (rig.lLeg) rig.lLeg.rotation.x = 0.4 + flail * 0.4;
+        if (rig.rLeg) rig.rLeg.rotation.x = 0.4 - flail * 0.4;
+      }
+
+      if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
+
+      if (u >= 1) {
+        this._finishTearSpaniard(s);
+      }
+    }
+  }
+
+  _posePuller(e, sideSign) {
+    const rig = e.mesh.userData.rig;
+    if (!rig?.lArm || !rig?.rArm) return;
+    // Both arms reach forward/out as if gripping the victim
+    rig.lArm.rotation.x = -1.35;
+    rig.rArm.rotation.x = -1.35;
+    rig.lArm.rotation.z = -0.35 * sideSign;
+    rig.rArm.rotation.z = 0.35 * sideSign;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.25;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.25;
+    if (rig.lLeg) rig.lLeg.rotation.x = 0.25;
+    if (rig.rLeg) rig.rLeg.rotation.x = -0.15;
+  }
+
+  _cancelTear(s) {
+    if (!s?.tearing) return;
+    const T = s.tearing;
+    if (T.a) T.a.tearing = null;
+    if (T.b) T.b.tearing = null;
+    s.tearing = null;
+    s.mesh.scale.set(T.sx, T.sy, T.sz);
+    s.mesh.position.y = 0;
+    s.mesh.rotation.x = 0;
+    s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
+  }
+
+  /** Snap — limbs fly toward each puller, stump drops. */
+  _finishTearSpaniard(s) {
     const idx = this.spaniards.indexOf(s);
     if (idx < 0) return;
-    this._spark(s.mesh.position.x, s.mesh.position.z, COL.blood, 10, 0.35, 1.0);
+    const T = s.tearing;
+    const x = s.mesh.position.x;
+    const z = s.mesh.position.z;
+    const ax = T?.ax ?? 1;
+    const az = T?.az ?? 0;
+
+    if (T?.a) T.a.tearing = null;
+    if (T?.b) T.b.tearing = null;
+    if (T?.a) {
+      T.a.civTarget = null;
+      T.a.civHuntTimer = 0;
+      if (Math.random() < 0.6) this._sayInvader(T.a, randPick(INVADER_CIV_LINES));
+    }
+    if (T?.b) {
+      T.b.civTarget = null;
+      T.b.civHuntTimer = 0;
+      if (Math.random() < 0.6) this._sayInvader(T.b, randPick(INVADER_CIV_LINES));
+    }
+    for (const e of this.enemies) {
+      if (e.civTarget === s) {
+        e.civTarget = null;
+        e.civHuntTimer = 0;
+      }
+    }
+
+    s.tearing = null;
+    s.mesh.scale.set(T.sx, T.sy, T.sz);
+    s.mesh.rotation.x = 0;
+
+    if (s.hpBar) s.hpBar.visible = false;
+    const parts = detachBodyParts(s.mesh);
+    for (const p of parts) {
+      // Leftish parts fly toward A (−axis), rightish toward B (+axis)
+      const towardA = p.name === 'lArm' || p.name === 'lLeg' || (p.name === 'head' && Math.random() < 0.5);
+      const sign = towardA ? -1 : 1;
+      const sp = 6 + Math.random() * 7;
+      const jx = (Math.random() - 0.5) * 3;
+      const jz = (Math.random() - 0.5) * 3;
+      this._spawnGib(
+        p.mesh,
+        ax * sign * sp + jx,
+        az * sign * sp + jz,
+        3.5 + Math.random() * 5,
+      );
+    }
+    if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+    this._spawnGib(s.mesh, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, 1.5 + Math.random() * 2);
+
+    if (s.bubble) s.bubble.remove();
+    this.spaniards.splice(idx, 1);
+
+    this._bloodBurst(x, z, { heavy: true });
+    this.sfx.knockdown();
+    this.shake = Math.min(1.1, this.shake + 0.5);
+  }
+
+  _spawnGib(mesh, vx, vz, vy, life = 2.4) {
+    this.world.add(mesh);
+    this.fx.push({
+      mesh,
+      vx,
+      vz,
+      vy,
+      life: life * (0.85 + Math.random() * 0.3),
+      max: life,
+      spin: (Math.random() - 0.5) * 14,
+      gib: true,
+    });
+  }
+
+  /** Mild directional punch spray. */
+  _bloodSpray(x, z, dirX = 0, dirZ = 0, { mild = true } = {}) {
+    const n = mild ? 5 + Math.floor(Math.random() * 4) : 12 + Math.floor(Math.random() * 6);
+    const len = Math.hypot(dirX, dirZ) || 1;
+    const nx = dirX / len;
+    const nz = dirZ / len;
+    for (let i = 0; i < n; i++) {
+      const spread = (Math.random() - 0.5) * (mild ? 1.1 : 1.8);
+      const px = -nz * spread + nx * (0.3 + Math.random());
+      const pz = nx * spread + nz * (0.3 + Math.random());
+      const sp = (mild ? 1.8 : 3.5) + Math.random() * (mild ? 2.5 : 4);
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.06 + Math.random() * 0.06, 0.06, 0.06 + Math.random() * 0.06),
+        makeMat(COL.blood),
+      );
+      mesh.position.set(x, 0.9 + Math.random() * 0.5, z);
+      this.world.add(mesh);
+      this.fx.push({
+        mesh,
+        vx: px * sp,
+        vz: pz * sp,
+        vy: (mild ? 1.2 : 2.2) + Math.random() * 2.5,
+        life: (mild ? 0.28 : 0.45) * (0.7 + Math.random() * 0.5),
+        max: mild ? 0.35 : 0.55,
+      });
+    }
+  }
+
+  /** Heavy tear blood — spray + ground pools. */
+  _bloodBurst(x, z, { heavy = false } = {}) {
+    this._spark(x, z, COL.blood, heavy ? 34 : 14, heavy ? 0.7 : 0.4, 1.15);
+    this._bloodSpray(x, z, Math.random() - 0.5, Math.random() - 0.5, { mild: false });
+    this._bloodSpray(x, z, Math.random() - 0.5, Math.random() - 0.5, { mild: false });
+    const pools = heavy ? 5 : 2;
+    for (let i = 0; i < pools; i++) {
+      const size = (heavy ? 0.35 : 0.2) + Math.random() * (heavy ? 0.45 : 0.25);
+      const mesh = new THREE.Mesh(
+        new THREE.CircleGeometry(size, 10),
+        new THREE.MeshBasicMaterial({
+          color: COL.blood,
+          transparent: true,
+          opacity: 0.75,
+          depthWrite: false,
+        }),
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(
+        x + (Math.random() - 0.5) * (heavy ? 1.4 : 0.6),
+        0.06,
+        z + (Math.random() - 0.5) * (heavy ? 1.4 : 0.6),
+      );
+      mesh.renderOrder = 2;
+      this.world.add(mesh);
+      this.fx.push({
+        mesh,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        life: heavy ? 4.5 + Math.random() * 2 : 2.5,
+        max: heavy ? 6 : 3,
+        gravity: false,
+        pool: true,
+        grow: true,
+      });
+    }
+  }
+
+  /** Drop 1–2 limbs with mild force (punch deaths). */
+  _mildDismember(root, dirX = 0, dirZ = 0) {
+    const pool = ['lArm', 'rArm', 'lLeg', 'rLeg'];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const count = Math.random() < 0.35 ? 2 : 1;
+    const names = pool.slice(0, count);
+    if (Math.random() < 0.12) names.push('head');
+    const parts = detachBodyParts(root, names);
+    const len = Math.hypot(dirX, dirZ) || 1;
+    const nx = dirX / len;
+    const nz = dirZ / len;
+    for (const p of parts) {
+      const sp = 2.2 + Math.random() * 2.8;
+      this._spawnGib(
+        p.mesh,
+        nx * sp + (Math.random() - 0.5) * 2,
+        nz * sp + (Math.random() - 0.5) * 2,
+        1.8 + Math.random() * 2.5,
+        1.6,
+      );
+    }
+  }
+
+  _killSpaniard(s, opts = {}) {
+    if (s.tearing) this._cancelTear(s);
+    if (s.heldBy) this._releaseHold(s);
+    const idx = this.spaniards.indexOf(s);
+    if (idx < 0) return;
+    const x = s.mesh.position.x;
+    const z = s.mesh.position.z;
+    if (opts.fromPunch && Math.random() < 0.42) {
+      this._mildDismember(s.mesh, opts.dirX || 0, opts.dirZ || 0);
+    }
+    this._bloodSpray(x, z, opts.dirX || 0, opts.dirZ || 0, { mild: true });
+    this._spark(x, z, COL.blood, 8, 0.3, 1.0);
     this.world.remove(s.mesh);
     if (s.bubble) s.bubble.remove();
     this.spaniards.splice(idx, 1);
@@ -1538,6 +2076,8 @@ export class Game {
         e.civTarget = null;
         e.civHuntTimer = 0;
       }
+      if (e.tearing === s) e.tearing = null;
+      if (e.holding === s) e.holding = null;
     }
   }
 
@@ -1554,6 +2094,9 @@ export class Game {
       else clearTint(s.mesh);
 
       if (s.speechLife <= 0 && s.bubble) s.bubble.classList.remove('on');
+
+      // Being pulled apart or held — posing handled elsewhere
+      if (s.tearing || s.heldBy) continue;
 
       let mx = 0;
       let mz = 0;
@@ -1709,6 +2252,7 @@ export class Game {
         fleeing,
         false,
       );
+      updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
       // Friendly wave while greeting (override walk arm after anim)
       if (waving && s.mesh.userData.rig?.rArm) {
         const rig = s.mesh.userData.rig;
@@ -1774,10 +2318,20 @@ export class Game {
     mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
   }
 
-  _killEnemy(index) {
+  _killEnemy(index, opts = {}) {
     const e = this.enemies[index];
     if (!e) return;
-    this._spark(e.mesh.position.x, e.mesh.position.z, COL.blood, 14, 0.45, 1.0);
+    if (e.holding) this._releaseHold(e.holding);
+    if (e.tearing) {
+      // Don't cancel mid-tear of a civilian if this invader dies — cancelTear handles pair
+    }
+    const x = e.mesh.position.x;
+    const z = e.mesh.position.z;
+    if (opts.fromPunch && Math.random() < 0.4) {
+      this._mildDismember(e.mesh, opts.dirX || 0, opts.dirZ || 0);
+    }
+    this._bloodSpray(x, z, opts.dirX || 0, opts.dirZ || 0, { mild: true });
+    this._spark(x, z, COL.blood, 10, 0.35, 1.0);
     this.sfx.enemyDie();
     if (e.bubble) e.bubble.remove();
     this.world.remove(e.mesh);
@@ -1837,12 +2391,50 @@ export class Game {
       f.mesh.position.z += f.vz * dt;
       f.mesh.position.y += f.vy * dt;
       if (f.gravity !== false) f.vy -= 12 * dt;
+
+      if (f.pool) {
+        const t = Math.max(0, f.life / f.max);
+        if (f.grow && f.life > f.max * 0.7) {
+          const u = 1 - (f.life - f.max * 0.7) / (f.max * 0.3);
+          f.mesh.scale.setScalar(0.4 + u * 0.6);
+        }
+        if (f.mesh.material) {
+          f.mesh.material.opacity = Math.min(0.8, t * 1.1);
+          f.mesh.material.transparent = true;
+        }
+        if (f.life <= 0) {
+          this.world.remove(f.mesh);
+          this.fx.splice(i, 1);
+        }
+        continue;
+      }
+
+      if (f.gib) {
+        f.mesh.rotation.x += f.spin * dt * 0.45;
+        f.mesh.rotation.y += f.spin * dt;
+        f.mesh.rotation.z += f.spin * dt * 0.3;
+        if (f.mesh.position.y < 0.08) {
+          f.mesh.position.y = 0.08;
+          f.vy *= -0.25;
+          f.vx *= 0.65;
+          f.vz *= 0.65;
+          f.spin *= 0.7;
+        }
+        if (f.life <= 0) {
+          this.world.remove(f.mesh);
+          this.fx.splice(i, 1);
+        }
+        continue;
+      }
+
       if (f.spin) f.mesh.rotation.z += f.spin * dt;
       const t = Math.max(0, f.life / f.max);
       if (f.grow) f.mesh.scale.setScalar(0.6 + (1 - t) * 1.8);
       else f.mesh.scale.setScalar(0.45 + t * 0.7);
-      f.mesh.material.opacity = t * (f.grow ? 0.55 : 0.85);
-      f.mesh.material.transparent = true;
+      if (f.mesh.material) {
+        f.mesh.material.opacity = t * (f.grow ? 0.55 : 0.85);
+        f.mesh.material.transparent = true;
+      }
       if (f.life <= 0) {
         this.world.remove(f.mesh);
         this.fx.splice(i, 1);
