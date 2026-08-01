@@ -112,6 +112,11 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   background: rgba(255, 236, 230, 0.96);
   border-color: rgba(180, 60, 50, 0.35);
 }
+.speech.foe {
+  color: #f4ece0;
+  background: rgba(40, 22, 18, 0.92);
+  border-color: rgba(200, 90, 60, 0.45);
+}
 .speech::after {
   content: '';
   position: absolute;
@@ -123,6 +128,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   border-bottom: 0;
 }
 .speech.fear::after { border-top-color: rgba(255, 236, 230, 0.96); }
+.speech.foe::after { border-top-color: rgba(40, 22, 18, 0.92); }
 
 #hints { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
   font-size: 11px; letter-spacing: .1em; color: var(--dim); white-space: nowrap; }

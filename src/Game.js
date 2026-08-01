@@ -89,6 +89,65 @@ const FEAR_LINES = [
   'We welcomed you!',
 ];
 
+// Mostly English / widely known Arabic; a few Arabic phrases mixed in
+const INVADER_MARCH_LINES = [
+  'To the city!',
+  'Keep moving!',
+  'Spain is next!',
+  'We made it ashore!',
+  'No going back!',
+  'Europe waits!',
+  'Push forward!',
+  'The gate is open!',
+  'Inshallah we take it.',
+  'Yalla!',
+  'Allahu Akbar!',
+  'Wallahi, we go!',
+];
+
+const INVADER_FIGHT_LINES = [
+  'Come fight!',
+  'You die here!',
+  'Get him!',
+  'Out of our way!',
+  'I\'ll break you!',
+  'Stay down!',
+  'This beach is ours!',
+  'Wallahi!',
+  'Allahu Akbar!',
+  'Yalla, hit him!',
+];
+
+const INVADER_CIV_LINES = [
+  'Out of the way!',
+  'Move!',
+  'You are nothing!',
+  'This land is ours!',
+  'Shut up!',
+  'We don\'t need you!',
+  'Go home, kuffar!',
+  'Spain is finished!',
+  'Allahu Akbar!',
+  'Yalla!',
+];
+
+const INVADER_HIT_LINES = [
+  'Argh!',
+  'You\'ll pay!',
+  'Hit him back!',
+  'I\'m fine — fight!',
+  'Wallah!',
+  'Allahu Akbar!',
+];
+
+const INVADER_BREACH_LINES = [
+  'We\'re through!',
+  'The city is ours!',
+  'Inshallah!',
+  'Allahu Akbar!',
+  'Keep going!',
+];
+
 const SPAIN_SKINS = [0xd4b08a, 0xc4a070, 0xb89068, 0xdbc4a0];
 const SPAIN_HAIR = [0x1a120e, 0x3a2818, 0x5a3a20, 0x2a1c14, 0x6a5030];
 const SPAIN_SHIRTS = [0xe8e0d4, 0xc45c48, 0x3a5a7a, 0xe8c84a, 0x2a6a5a, 0xf0ece4];
@@ -394,7 +453,10 @@ export class Game {
   }
 
   _clearEntities() {
-    for (const e of this.enemies) this.world.remove(e.mesh);
+    for (const e of this.enemies) {
+      this.world.remove(e.mesh);
+      if (e.bubble) e.bubble.remove();
+    }
     for (const s of this.spaniards) {
       this.world.remove(s.mesh);
       if (s.bubble) s.bubble.remove();
@@ -885,6 +947,18 @@ export class Game {
           if (dot < 0.05) continue;
           if (this._punchEnemy(j, dmg, dirX, dirZ)) hits += 1;
         }
+        for (let j = this.spaniards.length - 1; j >= 0; j--) {
+          const s = this.spaniards[j];
+          if (!s || s.hp <= 0) continue;
+          const dx = s.mesh.position.x - this.player.position.x;
+          const dz = s.mesh.position.z - this.player.position.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > MELEE_RANGE + s.r) continue;
+          const dot = (dx * dirX + dz * dirZ) / (dist || 1);
+          if (dot < 0.05) continue;
+          this._hurtSpaniard(s, dmg, dirX, dirZ, { fromPlayer: true });
+          hits += 1;
+        }
         if (hits > 0) {
           this.shake = Math.min(0.7, this.shake + 0.22 * hits);
           this.sfx.punchHit({ hard: hits > 1 });
@@ -1003,6 +1077,10 @@ export class Game {
     mesh.add(hpBar);
     this.world.add(mesh);
 
+    const bubble = document.createElement('div');
+    bubble.className = 'speech foe';
+    if (this._speechLayer) this._speechLayer.appendChild(bubble);
+
     // Face toward destination
     const dx = this.level.destination.x - x;
     const dz = this.level.destination.z - z;
@@ -1011,6 +1089,7 @@ export class Game {
     this.enemies.push({
       mesh,
       hpBar,
+      bubble,
       kind: kindKey,
       r: def.radius * (kindKey === 'sturdy' ? 1.1 : 1),
       hp: Math.round(def.hp * waveScale),
@@ -1032,12 +1111,27 @@ export class Game {
       civTarget: null,
       civHuntCd: 0.2 + Math.random() * 0.8,
       civHuntTimer: 0,
+      speechCd: 1.5 + Math.random() * 3,
+      speechLife: 0,
     });
   }
 
+  _sayInvader(e, text) {
+    if (!e?.bubble) return;
+    e.bubble.textContent = text;
+    e.bubble.classList.add('foe', 'on');
+    e.bubble.classList.remove('fear');
+    e.speechLife = 2.5;
+    e.speechCd = 3.5 + Math.random() * 4;
+  }
+
   _enrage(enemy, duration = AGGRO_DURATION) {
+    const wasCalm = enemy.aggroTimer <= 0;
     enemy.aggroTimer = Math.max(enemy.aggroTimer, duration);
     enemy.panicked = true;
+    if (wasCalm && Math.random() < 0.55) {
+      this._sayInvader(enemy, randPick(INVADER_FIGHT_LINES));
+    }
   }
 
   _witnessAttack(victim, excludeIndex = -1) {
@@ -1060,6 +1154,9 @@ export class Game {
     e.hitFlash = 0.12;
     this._enrage(e);
     this._witnessAttack(e, index);
+    if (e.speechCd <= 0 && Math.random() < 0.4) {
+      this._sayInvader(e, randPick(INVADER_HIT_LINES));
+    }
     if (dirX || dirZ) {
       const len = Math.hypot(dirX, dirZ) || 1;
       if (knockSpeed > 0) {
@@ -1088,6 +1185,9 @@ export class Game {
       if (e.aggroTimer <= 0) e.panicked = false;
       e.civHuntCd = Math.max(0, e.civHuntCd - dt);
       e.civHuntTimer = Math.max(0, e.civHuntTimer - dt);
+      e.speechCd = Math.max(0, e.speechCd - dt);
+      e.speechLife = Math.max(0, e.speechLife - dt);
+      if (e.speechLife <= 0 && e.bubble) e.bubble.classList.remove('on');
       if (e.civTarget && (e.civTarget.hp <= 0 || !this.spaniards.includes(e.civTarget))) {
         e.civTarget = null;
         e.civHuntTimer = 0;
@@ -1146,6 +1246,7 @@ export class Game {
           e.biteCd = 0.85 + Math.random() * 0.35;
           this._hurt(e.damage, nx, nz);
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
+          if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
         }
       } else if (!downed && !stunned && e.civTarget) {
         // Divert to punch a Spaniard
@@ -1174,6 +1275,7 @@ export class Game {
           e.biteCd = 0.55 + Math.random() * 0.25;
           this._hurtSpaniard(s, e.damage, nx, nz);
           this._spark(s.mesh.position.x, s.mesh.position.z, COL.blood, 5, 0.25, 1.0);
+          if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
         }
       } else {
         // Push for the city gate — often pick on a nearby Spaniard
@@ -1194,7 +1296,13 @@ export class Game {
           if (nearest && Math.random() < p) {
             e.civTarget = nearest;
             e.civHuntTimer = 10 + Math.random() * 6;
+            if (Math.random() < 0.45) this._sayInvader(e, randPick(INVADER_CIV_LINES));
           }
+        }
+
+        if (!downed && !stunned && !e.swimming && e.speechCd <= 0) {
+          if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_MARCH_LINES));
+          else e.speechCd = 1.2 + Math.random() * 2;
         }
 
         let tx = dest.x;
@@ -1372,7 +1480,7 @@ export class Game {
     s.speechCd = fear ? 1.2 : 4 + Math.random() * 5;
   }
 
-  _hurtSpaniard(s, damage, dirX = 0, dirZ = 0) {
+  _hurtSpaniard(s, damage, dirX = 0, dirZ = 0, opts = {}) {
     if (!s || s.hp <= 0) return;
     s.hp -= damage;
     s.hitFlash = 0.14;
@@ -1380,23 +1488,26 @@ export class Game {
     s.fleeX = dirX;
     s.fleeZ = dirZ;
     const len = Math.hypot(dirX, dirZ) || 1;
-    s.kbx = (dirX / len) * (PLAYER_KNOCK_SPEED * 0.85);
-    s.kbz = (dirZ / len) * (PLAYER_KNOCK_SPEED * 0.85);
+    const knock = opts.fromPlayer ? MELEE_KNOCK_SPEED * 0.75 : PLAYER_KNOCK_SPEED * 0.85;
+    s.kbx = (dirX / len) * knock;
+    s.kbz = (dirZ / len) * knock;
     this._saySpaniard(s, randPick(FEAR_LINES), true);
-    this.sfx.playerHurt();
+    if (!opts.fromPlayer) this.sfx.playerHurt();
 
-    // Nearby invaders join in on the victim
-    for (const e of this.enemies) {
-      if (e.aggroTimer > 0 || e.knockdownTimer > 0) continue;
-      const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
-      if (d > 8) continue;
-      if (e.civTarget === s) {
-        e.civHuntTimer = Math.max(e.civHuntTimer, 8);
-        continue;
-      }
-      if (!e.civTarget && Math.random() < 0.65) {
-        e.civTarget = s;
-        e.civHuntTimer = 8 + Math.random() * 4;
+    // Nearby invaders join in on the victim (not when the player struck them)
+    if (!opts.fromPlayer) {
+      for (const e of this.enemies) {
+        if (e.aggroTimer > 0 || e.knockdownTimer > 0) continue;
+        const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
+        if (d > 8) continue;
+        if (e.civTarget === s) {
+          e.civHuntTimer = Math.max(e.civHuntTimer, 8);
+          continue;
+        }
+        if (!e.civTarget && Math.random() < 0.65) {
+          e.civTarget = s;
+          e.civHuntTimer = 8 + Math.random() * 4;
+        }
       }
     }
 
@@ -1603,20 +1714,22 @@ export class Game {
     if (!this._speechLayer || !this.canvas) return;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    for (const s of this.spaniards) {
-      if (!s.bubble || s.speechLife <= 0) continue;
-      this._proj.set(s.mesh.position.x, 2.15, s.mesh.position.z);
+    const place = (mesh, bubble, speechLife) => {
+      if (!bubble || speechLife <= 0) return;
+      this._proj.set(mesh.position.x, 2.15, mesh.position.z);
       this._proj.project(this.camera);
       if (this._proj.z > 1) {
-        s.bubble.style.visibility = 'hidden';
-        continue;
+        bubble.style.visibility = 'hidden';
+        return;
       }
-      s.bubble.style.visibility = 'visible';
+      bubble.style.visibility = 'visible';
       const sx = (this._proj.x * 0.5 + 0.5) * w;
       const sy = (-this._proj.y * 0.5 + 0.5) * h;
-      s.bubble.style.left = `${sx}px`;
-      s.bubble.style.top = `${sy}px`;
-    }
+      bubble.style.left = `${sx}px`;
+      bubble.style.top = `${sy}px`;
+    };
+    for (const s of this.spaniards) place(s.mesh, s.bubble, s.speechLife);
+    for (const e of this.enemies) place(e.mesh, e.bubble, e.speechLife);
   }
 
   _breach(index) {
@@ -1626,6 +1739,13 @@ export class Game {
     this.shake = Math.min(1.0, this.shake + 0.35);
     this._spark(e.mesh.position.x, e.mesh.position.z, 0xaa3030, 10, 0.35, 1.0);
     this.sfx.breach();
+    // Nearby invaders cheer the breach
+    for (const o of this.enemies) {
+      if (o === e) continue;
+      const d = Math.hypot(o.mesh.position.x - e.mesh.position.x, o.mesh.position.z - e.mesh.position.z);
+      if (d < 10 && Math.random() < 0.4) this._sayInvader(o, randPick(INVADER_BREACH_LINES));
+    }
+    if (e.bubble) e.bubble.remove();
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     if (this.breached >= this.breachLimit) {
@@ -1649,6 +1769,7 @@ export class Game {
     if (!e) return;
     this._spark(e.mesh.position.x, e.mesh.position.z, COL.blood, 14, 0.45, 1.0);
     this.sfx.enemyDie();
+    if (e.bubble) e.bubble.remove();
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     this.score += e.score;
