@@ -47,10 +47,16 @@ export function createPerson(palette, opts = {}) {
   head.position.y = 0.72;
   torso.add(head);
   rig.head = head;
-  head.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.36, 0.34), mat(skin)));
-  const hairMesh = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.14, 0.36), mat(hair));
-  hairMesh.position.y = 0.2;
-  head.add(hairMesh);
+  // Face order: +x,-x,+y,-y,+z,-z — person faces +Z, so -Z is the back of the head
+  const skinMat = mat(skin);
+  const hairMat = mat(hair);
+  head.add(new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.36, 0.34),
+    [skinMat, skinMat, skinMat, skinMat, skinMat, hairMat],
+  ));
+  const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.14, 0.36), hairMat);
+  hairTop.position.y = 0.2;
+  head.add(hairTop);
 
   const mkArm = (side) => {
     const shoulder = new THREE.Group();
@@ -243,15 +249,12 @@ export function muzzleWorld(root, out) {
 
 export function setTint(root, hex) {
   root.traverse((o) => {
-    if (o.userData.skipTint) return;
-    if (o.isMesh && o.material && o.material.color && !o.userData._base) {
-      o.userData._base = o.material.color.getHex();
-    }
-  });
-  root.traverse((o) => {
-    if (o.userData.skipTint) return;
-    if (o.isMesh && o.material && o.material.color && o.userData._base != null) {
-      o.material.color.setHex(hex ?? o.userData._base);
+    if (o.userData.skipTint || !o.isMesh || !o.material) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m?.color) continue;
+      if (m.userData._base == null) m.userData._base = m.color.getHex();
+      m.color.setHex(hex ?? m.userData._base);
     }
   });
 }
