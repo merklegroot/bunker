@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Input } from './Input.js';
+import { Sfx } from './Audio.js';
 import {
   createPerson, animatePerson, setTint, clearTint, setArmed,
   createHealthBar, updateHealthBar,
@@ -180,6 +181,7 @@ export class Game {
   constructor(canvas) {
     this.canvas = canvas;
     this.input = new Input(canvas);
+    this.sfx = new Sfx();
     this.running = false;
     this.paused = false;
     this.time = 0;
@@ -336,6 +338,8 @@ export class Game {
   }
 
   start() {
+    this.sfx.unlock();
+    this.sfx.uiClick();
     this._clearEntities();
 
     this.score = 0;
@@ -401,6 +405,7 @@ export class Game {
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
+    this.sfx.waveStart(wave);
   }
 
   pause() {
@@ -417,6 +422,8 @@ export class Game {
 
   resume() {
     if (!this.paused) return;
+    this.sfx.unlock();
+    this.sfx.uiClick();
     this.paused = false;
     this.input.keys.clear();
     this.input.mouse.down = false;
@@ -428,6 +435,7 @@ export class Game {
     this.paused = false;
     this.playerAlive = false;
     this.player.visible = false;
+    this.sfx.gameOver(reason);
     const title = reason === 'breach' ? 'BREACHED' : 'FALLEN';
     const subtitle = reason === 'breach'
       ? 'Too many reached the city. Tarajal is overrun.'
@@ -596,6 +604,7 @@ export class Game {
           );
         }
         this._spark(b.mesh.position.x, b.mesh.position.z, COL.foam, 8, 0.4, 0.3);
+        this.sfx.boatLand();
         this.world.remove(b.mesh);
         this.boats.splice(i, 1);
       }
@@ -799,7 +808,12 @@ export class Game {
           if (dot < 0.05) continue;
           if (this._punchEnemy(j, dmg, dirX, dirZ)) hits += 1;
         }
-        if (hits > 0) this.shake = Math.min(0.7, this.shake + 0.22 * hits);
+        if (hits > 0) {
+          this.shake = Math.min(0.7, this.shake + 0.22 * hits);
+          this.sfx.punchHit({ hard: hits > 1 });
+        } else {
+          this.sfx.punchMiss();
+        }
       }
     }
 
@@ -838,6 +852,7 @@ export class Game {
   _meleeSwing(dirX, dirZ) {
     this.punchHand = this.punchSide;
     this.meleeAnim = MELEE_ANIM;
+    this.sfx.punchSwing();
 
     // Lunge + hit land at impact (see _applyMeleePose)
     this.lungeDirX = dirX;
@@ -872,6 +887,7 @@ export class Game {
       e.stunTimer = 0;
       e.knockdownTimer = KNOCKDOWN_TIME;
       this._setProne(e, true);
+      this.sfx.knockdown();
     } else if (e.knockdownTimer <= 0) {
       e.stunTimer = Math.max(e.stunTimer, PUNCH_STUN);
     }
@@ -1154,6 +1170,7 @@ export class Game {
     this.breached += 1;
     this.shake = Math.min(1.0, this.shake + 0.35);
     this._spark(e.mesh.position.x, e.mesh.position.z, 0xaa3030, 10, 0.35, 1.0);
+    this.sfx.breach();
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     if (this.breached >= this.breachLimit) {
@@ -1176,6 +1193,7 @@ export class Game {
     const e = this.enemies[index];
     if (!e) return;
     this._spark(e.mesh.position.x, e.mesh.position.z, COL.blood, 14, 0.45, 1.0);
+    this.sfx.enemyDie();
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     this.score += e.score;
@@ -1187,6 +1205,7 @@ export class Game {
     this.regenDelay = HP_REGEN_DELAY;
     this.regenAcc = 0;
     this.shake = Math.min(1.2, this.shake + 0.55);
+    this.sfx.playerHurt();
 
     const len = Math.hypot(dirX, dirZ);
     if (len > 0.01) {
