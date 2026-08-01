@@ -811,15 +811,15 @@ export class Game {
     if (rig.torso) {
       rig.torso.rotation.y = -side * 0.58 * body;
       // Positive X pitches toward +Z (facing), i.e. lean into the punch
-      rig.torso.rotation.x = 0.18 * body;
+      rig.torso.rotation.x = 0.38 * body;
       rig.torso.rotation.z = side * 0.06 * body;
-      rig.torso.position.y = 0.95 - 0.05 * body;
+      rig.torso.position.y = 0.95 - 0.06 * body;
     }
 
     // Chin tucks behind the punching shoulder
     if (rig.head) {
       rig.head.rotation.y = -side * 0.18 * body;
-      rig.head.rotation.x = 0.1 * body;
+      rig.head.rotation.x = 0.16 * body;
     }
 
     // Fist: hang → straight line, palm-down snap (internal rotation), retract same path
@@ -1024,10 +1024,22 @@ export class Game {
         const nx = dx / dist;
         const nz = dz / dist;
         e.mesh.rotation.y = Math.atan2(nx, nz);
-        mx = nx;
-        mz = nz;
 
-        if (e.biteCd <= 0 && dist < e.r + PLAYER_RADIUS + 0.4) {
+        // Hold just inside punching range — don't pile onto the player
+        const punchReach = e.r + PLAYER_RADIUS + 0.45;
+        const holdDist = punchReach - 0.2;
+        if (dist > holdDist + 0.12) {
+          mx = nx;
+          mz = nz;
+        } else if (dist < holdDist - 0.1) {
+          mx = -nx;
+          mz = -nz;
+        } else {
+          mx = 0;
+          mz = 0;
+        }
+
+        if (e.biteCd <= 0 && dist < punchReach) {
           e.biteCd = 0.85 + Math.random() * 0.35;
           this._hurt(e.damage, nx, nz);
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
