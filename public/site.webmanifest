@@ -1,11 +1,11 @@
 {
-  "name": "DUNGEON",
-  "short_name": "DUNGEON",
-  "description": "A top-down roguelike dungeon crawler",
+  "name": "TARAJAL",
+  "short_name": "TARAJAL",
+  "description": "Defend Tarajal beach. Stop the boats. Hold the city.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#08060a",
-  "theme_color": "#08060a",
+  "background_color": "#0e2430",
+  "theme_color": "#1a4a6a",
   "icons": [
     { "src": "/favicon-96.png", "sizes": "96x96", "type": "image/png" },
     { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }

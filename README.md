@@ -1,8 +1,10 @@
-# DUNGEON
+# TARAJAL
 
-A top-down roguelike dungeon crawler built with [Three.js](https://threejs.org/) and Vite.
+A top-down beach defense game set at Playa del Tarajal (Ceuta, Spain). Built with [Three.js](https://threejs.org/) and Vite.
 
-Each run generates a new stone labyrinth. Clear rooms, grab gold and potions, then take the stairs deeper. Enemies get nastier the further you go. Death is permanent.
+Waves of people come ashore on boats, rafts, and by swimming. Stop them before they reach the city gate. Your fists are the main weapon — ammo is scarce. Scavenge crates and throw rocks when you find them. Invaders mostly run for the city, but turn aggressive when attacked or when they see their friends hit.
+
+You lose if too many get through, or if you die.
 
 ## Play
 
@@ -14,8 +16,9 @@ npm run dev
 - **WASD** — move
 - **Shift** — run (drains stamina)
 - **Mouse** — aim
-- **Click** — shoot
-- **E / Space** — descend when on stairs
+- **Click** — punch (throw if holding a rock)
+- **Right-click** — fire rifle (limited ammo)
+- **E / Space** — pick up or drop rocks (ammo crates also auto-pickup)
 - **Esc** — pause
 
 ## Build

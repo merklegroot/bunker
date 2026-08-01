@@ -5,279 +5,173 @@ export function wall(x, z, w, d, h = 3.2) {
   return { x, z, w, d, h, hx: w * 0.5, hz: d * 0.5 };
 }
 
-function randInt(a, b) {
-  return a + Math.floor(Math.random() * (b - a + 1));
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
 /**
- * Procedural dungeon: rooms + L-corridors on a tile grid, then solid wall AABBs.
- * @param {number} depth Floor number (1+); deeper = more rooms / denser spawns.
+ * Rough Tarajal (Ceuta) layout:
+ *   -Z  city / promenade (invader destination)
+ *   mid sand beach + border fence
+ *   +Z  Mediterranean (boat / swimmer spawn)
+ *   +X  espigón / border breakwater
  */
-export function buildLevelSpec(depth = 1) {
-  const CELL = 2;
-  const W = 36 + Math.min(12, depth * 2);
-  const H = 36 + Math.min(12, depth * 2);
-  const MAP = Math.max(W, H) * CELL;
+export function buildLevelSpec(_wave = 1) {
+  const MAP = 72;
   const HALF = MAP / 2;
+  const CELL = 2;
 
-  const grid = Array.from({ length: H }, () => Array(W).fill(1)); // 1 = wall, 0 = floor
-  const rooms = [];
-  const roomTarget = Math.min(14, 5 + depth + Math.floor(depth / 2));
+  // Shore band: water z > waterLine, sand between, city z < cityLine
+  const waterLine = 10;
+  const shoreLine = 2;
+  const cityLine = -14;
+  const breachZ = cityLine - 4;
+  const breachHalfW = 5;
 
-  for (let tries = 0; tries < 120 && rooms.length < roomTarget; tries++) {
-    const rw = randInt(4, 8);
-    const rh = randInt(4, 7);
-    const rx = randInt(1, W - rw - 2);
-    const rz = randInt(1, H - rh - 2);
-
-    let ok = true;
-    for (const r of rooms) {
-      if (
-        rx < r.x + r.w + 1
-        && rx + rw + 1 > r.x
-        && rz < r.z + r.h + 1
-        && rz + rh + 1 > r.z
-      ) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-
-    carveRoom(grid, rx, rz, rw, rh);
-    rooms.push({
-      x: rx,
-      z: rz,
-      w: rw,
-      h: rh,
-      cx: rx + rw / 2,
-      cz: rz + rh / 2,
-    });
-  }
-
-  // Guarantee at least two rooms
-  if (rooms.length < 2) {
-    carveRoom(grid, 4, 4, 6, 5);
-    rooms.push({ x: 4, z: 4, w: 6, h: 5, cx: 7, cz: 6.5 });
-    carveRoom(grid, W - 12, H - 11, 6, 5);
-    rooms.push({
-      x: W - 12, z: H - 11, w: 6, h: 5,
-      cx: W - 9, cz: H - 8.5,
-    });
-  }
-
-  // Connect rooms in shuffled order (snake) so the map feels branched
-  const order = shuffle(rooms.map((_, i) => i));
-  for (let i = 1; i < order.length; i++) {
-    const a = rooms[order[i - 1]];
-    const b = rooms[order[i]];
-    carveCorridor(grid, Math.floor(a.cx), Math.floor(a.cz), Math.floor(b.cx), Math.floor(b.cz));
-  }
-  // Extra links for loops on deeper floors
-  const extra = Math.min(3, Math.floor(depth / 2));
-  for (let i = 0; i < extra && rooms.length > 3; i++) {
-    const a = rooms[randInt(0, rooms.length - 1)];
-    const b = rooms[randInt(0, rooms.length - 1)];
-    if (a === b) continue;
-    carveCorridor(grid, Math.floor(a.cx), Math.floor(a.cz), Math.floor(b.cx), Math.floor(b.cz));
-  }
-
-  // Seal outer border
-  for (let z = 0; z < H; z++) {
-    grid[z][0] = 1;
-    grid[z][W - 1] = 1;
-  }
-  for (let x = 0; x < W; x++) {
-    grid[0][x] = 1;
-    grid[H - 1][x] = 1;
-  }
-
-  const tileToWorld = (tx, tz) => ({
-    x: (tx + 0.5) * CELL - HALF,
-    z: (tz + 0.5) * CELL - HALF,
-  });
-
-  const startRoom = rooms[0];
-  const endRoom = rooms.reduce((best, r) => {
-    const d = Math.hypot(r.cx - startRoom.cx, r.cz - startRoom.cz);
-    return !best || d > best.d ? { r, d } : best;
-  }, null).r;
-
-  const playerSpawn = tileToWorld(
-    Math.floor(startRoom.cx),
-    Math.floor(startRoom.cz),
-  );
-  const stairsPos = tileToWorld(
-    Math.floor(endRoom.cx),
-    Math.floor(endRoom.cz),
-  );
-
-  // Spawn points: floor tiles in rooms other than start
-  const spawnPoints = [];
-  const lootPoints = [];
-  for (const room of rooms) {
-    const isStart = room === startRoom;
-    const isEnd = room === endRoom;
-    for (let tz = room.z + 1; tz < room.z + room.h - 1; tz++) {
-      for (let tx = room.x + 1; tx < room.x + room.w - 1; tx++) {
-        if (grid[tz][tx] !== 0) continue;
-        const p = tileToWorld(tx, tz);
-        const nearPlayer = Math.hypot(p.x - playerSpawn.x, p.z - playerSpawn.z) < 5;
-        const nearStairs = Math.hypot(p.x - stairsPos.x, p.z - stairsPos.z) < 2.5;
-        if (nearPlayer || nearStairs) continue;
-        if (!isStart) spawnPoints.push(p);
-        if (!isStart && !isEnd) lootPoints.push(p);
-      }
-    }
-  }
-
-  // Merge wall tiles into larger AABBs where possible (row runs)
-  const walls = mergeWalls(grid, W, H, CELL, HALF);
-  // Outer fence — short enough not to hide the map under the angled camera
-  walls.push(wall(0, -HALF - 0.6, MAP + 2.4, 1.2, 2.0));
-  walls.push(wall(0, HALF + 0.6, MAP + 2.4, 1.2, 2.0));
-  walls.push(wall(-HALF - 0.6, 0, 1.2, MAP, 2.0));
-  walls.push(wall(HALF + 0.6, 0, 1.2, MAP, 2.0));
-
+  const walls = [];
   const floors = [];
-  // Base dirt under everything
-  floors.push({ x: 0, z: 0, w: MAP + 4, d: MAP + 4, color: 0x0c0a08, y: -0.02 });
-
-  // Floor tiles as room/corridor patches (batched by room + corridor cells)
-  for (let tz = 0; tz < H; tz++) {
-    for (let tx = 0; tx < W; tx++) {
-      if (grid[tz][tx] !== 0) continue;
-      const p = tileToWorld(tx, tz);
-      const checker = (tx + tz) % 2 === 0;
-      floors.push({
-        x: p.x,
-        z: p.z,
-        w: CELL * 0.98,
-        d: CELL * 0.98,
-        color: checker ? 0x2a241c : 0x241e18,
-        y: 0,
-      });
-    }
-  }
-
   const props = [];
-  // Pillars / columns in larger rooms
-  for (const room of rooms) {
-    if (room.w < 6 || room.h < 6) continue;
-    const px = Math.floor(room.cx);
-    const pz = Math.floor(room.cz);
-    if (room === endRoom || room === startRoom) continue;
-    if (grid[pz]?.[px] !== 0) continue;
-    const p = tileToWorld(px, pz);
-    // Skip if too close to spawn points center — place offset
-    const ox = p.x + CELL * 0.35;
-    const oz = p.z - CELL * 0.35;
-    props.push(wall(ox, oz, 0.7, 0.7, 1.55));
+
+  // —— Ground planes (non-overlapping Z bands to avoid z-fighting) ——
+  // Deep sea  z: 36 → 14
+  floors.push({ x: 0, z: 25, w: MAP + 8, d: 22, color: 0x1a4a6a, y: -0.2 });
+  // Shallow / surf  z: 14 → 8
+  floors.push({ x: 0, z: 11, w: MAP + 4, d: 6, color: 0x3a8aaa, y: -0.12 });
+  // Wet sand  z: 8 → 2
+  floors.push({ x: 0, z: 5, w: MAP + 2, d: 6, color: 0xc4b48a, y: -0.04 });
+  // Dry sand  z: 2 → -14
+  floors.push({ x: 0, z: -6, w: MAP + 2, d: 16, color: 0xd8c49a, y: 0 });
+  // Promenade / asphalt  z: -14 → -18
+  floors.push({ x: 0, z: -16, w: MAP + 2, d: 4, color: 0x5a5a58, y: 0.08 });
+  // City plaza  z: -18 → -36
+  floors.push({ x: 0, z: -27, w: MAP + 4, d: 18, color: 0x6a6860, y: 0.08 });
+
+  // —— Border fence (east side, toward Morocco) ——
+  // Single thin panels for collision; posts are visual-only (avoids z-fight)
+  const fenceX = 22;
+  walls.push(wall(fenceX, 0, 0.12, 56, 2.1));
+  walls.push(wall(fenceX + 1.4, 0, 0.12, 56, 2.1));
+
+  // Espigón / rocky breakwater extending into the sea
+  for (let i = 0; i < 10; i++) {
+    const ez = 12 + i * 2.4;
+    const ew = 2.2 + (i % 3) * 0.4;
+    // Offset successive rocks so they barely overlap
+    walls.push(wall(fenceX - 0.4 + (i % 2) * 0.5, ez, ew, 1.8, 0.7 + (i % 2) * 0.35));
   }
-  walls.push(...props);
+
+  // —— City buildings (north) —— blocking except the breach gate
+  // West block
+  walls.push(wall(-16, -26, 18, 10, 4.5));
+  walls.push(wall(-22, -18, 8, 8, 3.2));
+  // East block (near fence)
+  walls.push(wall(14, -26, 14, 10, 4.2));
+  walls.push(wall(10, -18, 10, 6, 3.0));
+  // Far north wall (city interior)
+  walls.push(wall(-8, -32, 12, 4, 3.5));
+  walls.push(wall(8, -32, 10, 4, 3.8));
+
+  // Border crossing / customs booth (east of beach near fence)
+  walls.push(wall(16, -8, 6, 4, 2.8));
+  walls.push(wall(18, -4, 3, 2.5, 2.2));
+
+  // Low dunes / rock clusters on beach (cover)
+  const coverSpots = [
+    [-14, 4], [-8, -2], [6, 6], [-18, -6], [4, -8],
+    [-4, 8], [10, 2], [-12, -10], [2, -4],
+  ];
+  for (const [cx, cz] of coverSpots) {
+    const hw = 1.2 + Math.random() * 1.4;
+    const hd = 0.9 + Math.random() * 1.1;
+    const hh = 0.55 + Math.random() * 0.55;
+    walls.push(wall(cx, cz, hw, hd, hh));
+    props.push({ kind: 'rock', x: cx, z: cz, w: hw, d: hd, h: hh });
+  }
+
+  // Palm / scrub markers (visual only via props list; meshes in buildLevelMeshes)
+  const flora = [
+    [-20, -12], [-24, 0], [8, -12], [-16, 10], [12, 8],
+  ];
+
+  // Outer bounds (invisible play fence — low)
+  walls.push(wall(0, HALF + 1, MAP + 4, 2, 1.5));
+  walls.push(wall(0, -HALF - 1, MAP + 4, 2, 2.5));
+  walls.push(wall(-HALF - 1, 0, 2, MAP + 4, 2));
+  walls.push(wall(HALF + 1, 0, 2, MAP + 4, 2));
+
+  // Player starts mid-beach facing the sea
+  const playerSpawn = { x: -4, z: -2 };
+
+  // Invaders run toward the open gate into the city
+  const destination = { x: 0, z: breachZ };
+
+  // Boat spawn band (offshore)
+  const boatSpawns = [];
+  for (let i = 0; i < 8; i++) {
+    boatSpawns.push({
+      x: -18 + i * 5 + (Math.random() - 0.5) * 2,
+      z: 26 + Math.random() * 6,
+    });
+  }
+
+  // Swimmer spawn (near shore / around espigón)
+  const swimSpawns = [];
+  for (let i = 0; i < 10; i++) {
+    swimSpawns.push({
+      x: -20 + Math.random() * 36,
+      z: waterLine + 2 + Math.random() * 8,
+    });
+  }
+  // Around the breakwater tip
+  for (let i = 0; i < 4; i++) {
+    swimSpawns.push({
+      x: fenceX - 4 - Math.random() * 4,
+      z: 20 + Math.random() * 8,
+    });
+  }
+
+  // Ammo caches on beach / promenade
+  const ammoPoints = [
+    { x: -10, z: 2 },
+    { x: 8, z: -6 },
+    { x: -16, z: -8 },
+    { x: 2, z: 6 },
+    { x: -6, z: -10 },
+    { x: 12, z: 4 },
+  ];
+
+  // Throwable rocks / melee debris
+  // Throwable rocks only for now (sticks / melee props later)
+  const pickupPoints = [
+    { x: -6, z: 4, kind: 'rock' },
+    { x: 4, z: 0, kind: 'rock' },
+    { x: -12, z: -4, kind: 'rock' },
+    { x: 0, z: 8, kind: 'rock' },
+    { x: 6, z: -10, kind: 'rock' },
+    { x: 14, z: 6, kind: 'rock' },
+    { x: -8, z: 10, kind: 'rock' },
+    { x: 10, z: -2, kind: 'rock' },
+    { x: -18, z: 2, kind: 'rock' },
+    { x: -2, z: -6, kind: 'rock' },
+  ];
 
   return {
     MAP,
     HALF,
     CELL,
-    W,
-    H,
-    grid,
     walls,
     floors,
-    rooms,
     props,
-    spawnPoints,
-    lootPoints,
+    flora,
     playerSpawn,
-    stairsPos,
-    startRoom,
-    endRoom,
-    depth,
-    tileToWorld,
+    destination,
+    breachZ,
+    breachHalfW,
+    waterLine,
+    shoreLine,
+    cityLine,
+    fenceX,
+    boatSpawns,
+    swimSpawns,
+    ammoPoints,
+    pickupPoints,
   };
-}
-
-function carveRoom(grid, x, z, w, h) {
-  for (let tz = z; tz < z + h; tz++) {
-    for (let tx = x; tx < x + w; tx++) {
-      grid[tz][tx] = 0;
-    }
-  }
-}
-
-function carveCorridor(grid, x0, z0, x1, z1) {
-  let x = x0;
-  let z = z0;
-  // Randomly choose H-then-V or V-then-H
-  if (Math.random() < 0.5) {
-    while (x !== x1) {
-      grid[z][x] = 0;
-      grid[z][Math.min(x + 1, grid[0].length - 1)] = 0;
-      x += x < x1 ? 1 : -1;
-    }
-    while (z !== z1) {
-      grid[z][x] = 0;
-      if (z + 1 < grid.length) grid[z + 1][x] = 0;
-      z += z < z1 ? 1 : -1;
-    }
-  } else {
-    while (z !== z1) {
-      grid[z][x] = 0;
-      if (x + 1 < grid[0].length) grid[z][x + 1] = 0;
-      z += z < z1 ? 1 : -1;
-    }
-    while (x !== x1) {
-      grid[z][x] = 0;
-      if (z + 1 < grid.length) grid[z + 1][x] = 0;
-      x += x < x1 ? 1 : -1;
-    }
-  }
-  grid[z1][x1] = 0;
-}
-
-/** Greedy horizontal then vertical merge of wall tiles into AABBs. */
-function mergeWalls(grid, W, H, CELL, HALF) {
-  const used = Array.from({ length: H }, () => Array(W).fill(false));
-  const walls = [];
-
-  for (let z = 0; z < H; z++) {
-    for (let x = 0; x < W; x++) {
-      if (grid[z][x] !== 1 || used[z][x]) continue;
-
-      let x2 = x;
-      while (x2 + 1 < W && grid[z][x2 + 1] === 1 && !used[z][x2 + 1]) x2 += 1;
-
-      let z2 = z;
-      outer: while (z2 + 1 < H) {
-        for (let xx = x; xx <= x2; xx++) {
-          if (grid[z2 + 1][xx] !== 1 || used[z2 + 1][xx]) break outer;
-        }
-        z2 += 1;
-      }
-
-      for (let zz = z; zz <= z2; zz++) {
-        for (let xx = x; xx <= x2; xx++) used[zz][xx] = true;
-      }
-
-      const tw = (x2 - x + 1) * CELL;
-      const td = (z2 - z + 1) * CELL;
-      const cx = ((x + x2 + 1) / 2) * CELL - HALF;
-      const cz = ((z + z2 + 1) / 2) * CELL - HALF;
-      // Low walls so corridors stay readable under the angled camera
-      const h = 1.25 + ((x * 3 + z * 7) % 5) * 0.06;
-      walls.push(wall(cx, cz, tw * 0.98, td * 0.98, h));
-    }
-  }
-  return walls;
 }
 
 export function circleHitsWall(cx, cz, r, walls) {
@@ -364,10 +258,11 @@ function makeMat(color, opts = {}) {
   return new THREE.MeshBasicMaterial({ color, ...opts });
 }
 
-const STONE = [0x3a342c, 0x322c26, 0x403830, 0x2e2822, 0x463e34];
+const BUILDING = [0x8a8070, 0x7a7468, 0x9a9080, 0x6a6558, 0xa09888];
+const ROCK = [0x6a6458, 0x5a5448, 0x7a7060, 0x4a4840];
 
 export function buildLevelMeshes(root, spec) {
-  const { MAP, walls, floors, stairsPos, depth } = spec;
+  const { MAP, walls, floors, flora, destination, fenceX, waterLine } = spec;
 
   while (root.children.length) {
     const c = root.children[0];
@@ -391,56 +286,127 @@ export function buildLevelMeshes(root, spec) {
     root.add(mesh);
   }
 
-  let si = 0;
+  // Surf foam — no depth write so it never z-fights the shore planes
+  const foam = new THREE.Mesh(
+    new THREE.PlaneGeometry(MAP * 0.9, 1.6),
+    makeMat(0xd8e8f0, {
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -4,
+    }),
+  );
+  foam.rotation.x = -Math.PI / 2;
+  foam.position.set(0, 0.06, waterLine - 1);
+  foam.renderOrder = 2;
+  root.add(foam);
+
+  let bi = 0;
+  let ri = 0;
   for (const w of walls) {
     const isOuter = w.w > MAP * 0.5 || w.d > MAP * 0.5;
-    const color = isOuter
-      ? 0x1a1612
-      : STONE[si++ % STONE.length];
+    const isFence = w.w < 0.25 && w.h > 1.8;
+    const isLowRock = w.h < 1.2 && !isOuter;
+    let color;
+    if (isOuter) color = 0x1a2830;
+    else if (isFence) color = 0x3a4048;
+    else if (isLowRock) color = ROCK[ri++ % ROCK.length];
+    else color = BUILDING[bi++ % BUILDING.length];
+
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), makeMat(color));
-    mesh.position.set(w.x, w.h / 2, w.z);
+    // Sink slightly so bottoms don't z-fight the ground plane
+    mesh.position.set(w.x, w.h / 2 - 0.02, w.z);
     root.add(mesh);
+
+    // Flat roofs on taller buildings
+    if (w.h > 2.5 && !isFence && !isOuter) {
+      const roof = new THREE.Mesh(
+        new THREE.BoxGeometry(w.w + 0.3, 0.2, w.d + 0.3),
+        makeMat(0x4a4038),
+      );
+      roof.position.set(w.x, w.h + 0.1, w.z);
+      root.add(roof);
+    }
   }
 
-  // Stairs down marker
-  const stairGroup = new THREE.Group();
-  stairGroup.position.set(stairsPos.x, 0, stairsPos.z);
-  const pad = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.1, 1.1, 0.12, 8),
-    makeMat(0x1a3040),
-  );
-  pad.position.y = 0.06;
-  stairGroup.add(pad);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.85, 0.08, 6, 16),
-    makeMat(0x4ad4ff),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.14;
-  stairGroup.add(ring);
-  const glow = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.35, 0.55, 0.5, 6),
-    makeMat(0x2a80a0),
-  );
-  glow.position.y = 0.35;
-  stairGroup.add(glow);
-  root.add(stairGroup);
-  spec.stairsMesh = stairGroup;
+  // Fence posts (visual only — panels already in walls)
+  for (let z = -28; z < 28; z += 2.2) {
+    for (const ox of [0, 1.4]) {
+      const post = new THREE.Mesh(
+        new THREE.BoxGeometry(0.2, 2.4, 0.2),
+        makeMat(0x3a4048),
+      );
+      // Sit just outside the panel face so depths don't fight
+      post.position.set(fenceX + ox + (ox === 0 ? -0.18 : 0.18), 1.2, z);
+      root.add(post);
+      const tip = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.15, 0.3),
+        makeMat(0x8a9098),
+      );
+      tip.position.set(fenceX + ox + (ox === 0 ? -0.18 : 0.18), 2.5, z);
+      root.add(tip);
+    }
+  }
 
-  // Depth-tinted torch posts near stairs
-  const torchMat = makeMat(depth % 2 === 0 ? 0xffa050 : 0xff7040);
+  // Destination / city gate marker
+  const gate = new THREE.Group();
+  gate.position.set(destination.x, 0, destination.z);
+  // Thin box instead of a coplanar plane — avoids flicker on the plaza
+  const gatePad = new THREE.Mesh(
+    new THREE.BoxGeometry(10, 0.12, 4),
+    makeMat(0x4a4840),
+  );
+  gatePad.position.y = 0.14;
+  gate.add(gatePad);
   for (const side of [-1, 1]) {
-    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.6, 0.12), makeMat(0x2a2218));
-    pole.position.set(stairsPos.x + side * 1.6, 0.8, stairsPos.z + 1.2);
-    root.add(pole);
-    const flame = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), torchMat);
-    flame.position.set(stairsPos.x + side * 1.6, 1.75, stairsPos.z + 1.2);
-    root.add(flame);
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 3.2, 0.5),
+      makeMat(0x5a5048),
+    );
+    post.position.set(side * 4.5, 1.6, 0);
+    gate.add(post);
+  }
+  const lintel = new THREE.Mesh(
+    new THREE.BoxGeometry(9.5, 0.4, 0.5),
+    makeMat(0x6a6050),
+  );
+  lintel.position.set(0, 3.2, 0);
+  gate.add(lintel);
+  const banner = new THREE.Mesh(
+    new THREE.BoxGeometry(3.2, 0.55, 0.08),
+    makeMat(0xaa3030),
+  );
+  banner.position.set(0, 2.6, 0.1);
+  gate.add(banner);
+  root.add(gate);
+  spec.gateMesh = gate;
+
+  // Sparse palms / scrub
+  for (const [fx, fz] of flora) {
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.18, 2.4, 5),
+      makeMat(0x6a5030),
+    );
+    trunk.position.set(fx, 1.2, fz);
+    root.add(trunk);
+    const frond = new THREE.Mesh(
+      new THREE.ConeGeometry(1.1, 1.4, 5),
+      makeMat(0x2a6a3a),
+    );
+    frond.position.set(fx, 2.6, fz);
+    root.add(frond);
   }
 
-  const grid = new THREE.GridHelper(MAP, Math.floor(MAP / 2), 0x1e1810, 0x16120e);
-  grid.position.y = 0.008;
-  grid.material.opacity = 0.2;
-  grid.material.transparent = true;
-  root.add(grid);
+  // Distant Moroccan hills hint (+X beyond fence)
+  for (let i = 0; i < 5; i++) {
+    const hill = new THREE.Mesh(
+      new THREE.ConeGeometry(4 + i, 2 + i * 0.4, 5),
+      makeMat(0x5a6a48),
+    );
+    hill.position.set(fenceX + 10 + i * 3, 0.5, -10 + i * 6);
+    root.add(hill);
+  }
+
 }

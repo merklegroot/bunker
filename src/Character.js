@@ -101,10 +101,19 @@ export function createPerson(palette, opts = {}) {
 
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.42, 16),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 }),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -2,
+    }),
   );
   shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.02;
+  shadow.position.y = 0.05;
+  shadow.renderOrder = 1;
   root.add(shadow);
 
   root.userData.rig = rig;

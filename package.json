@@ -1,7 +1,7 @@
 {
-  "name": "dungeon",
+  "name": "tarajal",
   "version": "1.0.0",
-  "description": "DUNGEON — a top-down roguelike dungeon crawler",
+  "description": "TARAJAL — defend the beach at Ceuta",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -10,8 +10,8 @@
   "keywords": [
     "three.js",
     "game",
-    "roguelike",
-    "dungeon-crawler"
+    "beach-defense",
+    "tarajal"
   ],
   "author": "Anshu Chimala",
   "license": "MIT",
