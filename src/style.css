@@ -214,6 +214,74 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 .shopHint kbd { font: inherit; color: var(--sea); margin-right: 4px; }
 
+#simControls {
+  width: 220px;
+  padding: 8px 10px 10px;
+  background: rgba(8, 20, 28, 0.88);
+  border-right: 1px solid rgba(232, 240, 244, 0.14);
+  border-bottom: 1px solid rgba(232, 240, 244, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#simControls.hidden { display: none; }
+.simSpeed {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+.simSpeed button,
+#btnNextWave {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid rgba(232, 240, 244, 0.18);
+  background: rgba(232, 240, 244, 0.06);
+  color: rgba(220, 232, 238, 0.85);
+  transition: background .12s, border-color .12s, color .12s;
+}
+.simSpeed button {
+  padding: 8px 4px;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.simSpeed button:hover,
+#btnNextWave:hover:not(:disabled) {
+  background: rgba(232, 240, 244, 0.12);
+  border-color: rgba(232, 196, 106, 0.45);
+  color: var(--ink);
+}
+.simSpeed button.on {
+  background: rgba(232, 196, 106, 0.16);
+  border-color: rgba(232, 196, 106, 0.65);
+  color: #f0d090;
+}
+#btnNextWave {
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  color: var(--sea);
+  border-color: rgba(74, 160, 192, 0.4);
+  background: rgba(74, 160, 192, 0.08);
+}
+#btnNextWave:hover:not(:disabled) {
+  color: #9ad4e8;
+  border-color: rgba(74, 160, 192, 0.7);
+  background: rgba(74, 160, 192, 0.16);
+}
+#btnNextWave:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: rgba(200, 220, 230, 0.45);
+  border-color: rgba(122, 154, 170, 0.25);
+  background: rgba(232, 240, 244, 0.04);
+}
+
 #speechLayer {
   position: absolute; inset: 0;
   pointer-events: none; overflow: hidden;
@@ -383,6 +451,9 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #hudTopRow { width: 100%; }
   #vitals { padding: 6px 10px; min-width: 0; }
   #shop {
+    width: min(200px, calc(100vw - 130px));
+  }
+  #simControls {
     width: min(200px, calc(100vw - 130px));
   }
   #scoreWrap, #waveWrap, #ammoWrap, #goldWrap, #breachedWrap, #enemiesWrap {

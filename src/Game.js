@@ -68,7 +68,9 @@ const TOWER_PICKUP_RANGE = 2.4;
 const TOWER_START_COUNT = 0;
 const TOWER_SHOP_COST = 25;
 const TOWER_OWN_CAP = 6;
+const TOWER_CARRY_CAP = 1;
 const START_GOLD = 50;
+const SIM_FAST_SCALE = 2.5;
 const ARROW_SPEED = 26;
 const ARROW_LIFE = 1.4;
 
@@ -406,6 +408,7 @@ export class Game {
     this.sfx = new Sfx();
     this.running = false;
     this.paused = false;
+    this.timeScale = 1;
     this.score = 0;
     this.gold = START_GOLD;
     this.wave = 1;
@@ -526,6 +529,11 @@ export class Game {
       shopGold: document.getElementById('shopGold'),
       towerCost: document.getElementById('towerCost'),
       buyTowerBtn: document.getElementById('buyTowerBtn'),
+      simControls: document.getElementById('simControls'),
+      btnPause: document.getElementById('btnPause'),
+      btnPlay: document.getElementById('btnPlay'),
+      btnFast: document.getElementById('btnFast'),
+      btnNextWave: document.getElementById('btnNextWave'),
       radar: document.getElementById('radar'),
     };
     this._speechLayer = document.getElementById('speechLayer');
@@ -536,10 +544,15 @@ export class Game {
     if (this.el.buyTowerBtn) {
       this.el.buyTowerBtn.addEventListener('click', () => this._buyTower());
     }
+    if (this.el.btnPause) this.el.btnPause.addEventListener('click', () => this._setTimeScale(0));
+    if (this.el.btnPlay) this.el.btnPlay.addEventListener('click', () => this._setTimeScale(1));
+    if (this.el.btnFast) this.el.btnFast.addEventListener('click', () => this._setTimeScale(SIM_FAST_SCALE));
+    if (this.el.btnNextWave) this.el.btnNextWave.addEventListener('click', () => this._requestNextWave());
     if (this.el.towerCost) this.el.towerCost.textContent = String(TOWER_SHOP_COST);
     this._renderHp();
     this._renderStamina();
     this._setShopOpen(false);
+    this._renderSimControls();
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {
@@ -625,6 +638,7 @@ export class Game {
     this.kbz = 0;
     this._pendingPunch = null;
     this.paused = false;
+    this.timeScale = 1;
     this.running = true;
     this.time = 0;
     this.playerAlive = true;
@@ -673,6 +687,7 @@ export class Game {
     this._waveClearDelay = 0;
     this._waveTimer = 0;
     this._setPrompt(this._prepPrompt());
+    this._renderSimControls();
   }
 
   _prepPrompt() {
@@ -697,12 +712,47 @@ export class Game {
     this._waveTimer = 0;
     this.sfx.waveStart(wave);
     this._setPrompt('');
+    this._renderSimControls();
   }
 
   _setShopOpen(open) {
     if (!this.el.shop) return;
     this.el.shop.classList.toggle('hidden', !open);
-    if (open) this._renderShop();
+    if (this.el.simControls) this.el.simControls.classList.toggle('hidden', !open);
+    if (open) {
+      this._renderShop();
+      this._renderSimControls();
+    }
+  }
+
+  _setTimeScale(scale) {
+    if (!this.running || this.paused || !this.playerAlive) return;
+    this.timeScale = scale;
+    this.sfx.uiClick();
+    this._renderSimControls();
+  }
+
+  _renderSimControls() {
+    const scale = this.timeScale;
+    if (this.el.btnPause) this.el.btnPause.classList.toggle('on', scale <= 0);
+    if (this.el.btnPlay) this.el.btnPlay.classList.toggle('on', scale > 0 && scale < SIM_FAST_SCALE - 0.1);
+    if (this.el.btnFast) this.el.btnFast.classList.toggle('on', scale >= SIM_FAST_SCALE - 0.1);
+    if (this.el.btnNextWave) {
+      const canNext = this.running && this.playerAlive && this._wavePhase === 'prep';
+      this.el.btnNextWave.disabled = !canNext;
+    }
+  }
+
+  _requestNextWave() {
+    if (!this.running || this.paused || !this.playerAlive) return;
+    if (this._wavePhase !== 'prep') {
+      this.sfx.uiClick();
+      return;
+    }
+    this.sfx.uiClick();
+    if (this.timeScale <= 0) this.timeScale = 1;
+    this._beginWave(this.wave);
+    this._renderSimControls();
   }
 
   _towerOwnedCount() {
@@ -713,15 +763,21 @@ export class Game {
     if (this.el.shopGold) this.el.shopGold.textContent = String(this.gold);
     if (!this.el.buyTowerBtn) return;
     const atCap = this._towerOwnedCount() >= TOWER_OWN_CAP;
-    const canBuy = this.gold >= TOWER_SHOP_COST && !atCap;
+    const carrying = this.towerStock >= TOWER_CARRY_CAP;
+    const canBuy = this.gold >= TOWER_SHOP_COST && !atCap && !carrying;
     this.el.buyTowerBtn.disabled = !canBuy;
-    this.el.buyTowerBtn.title = atCap
-      ? `Tower limit (${TOWER_OWN_CAP})`
-      : (canBuy ? 'Buy arrow tower' : `Need ${TOWER_SHOP_COST} gold`);
+    if (carrying) this.el.buyTowerBtn.title = 'Place your tower before buying another';
+    else if (atCap) this.el.buyTowerBtn.title = `Tower limit (${TOWER_OWN_CAP})`;
+    else if (canBuy) this.el.buyTowerBtn.title = 'Buy arrow tower';
+    else this.el.buyTowerBtn.title = `Need ${TOWER_SHOP_COST} gold`;
   }
 
   _buyTower() {
     if (!this.running || this.paused || !this.playerAlive) return;
+    if (this.towerStock >= TOWER_CARRY_CAP) {
+      this.sfx.uiClick();
+      return;
+    }
     if (this._towerOwnedCount() >= TOWER_OWN_CAP) {
       this.sfx.uiClick();
       return;
@@ -731,7 +787,7 @@ export class Game {
       return;
     }
     this.gold -= TOWER_SHOP_COST;
-    this.towerStock += 1;
+    this.towerStock = Math.min(TOWER_CARRY_CAP, this.towerStock + 1);
     this._syncCarryMesh();
     this._renderShop();
     this._renderHud();
@@ -778,6 +834,7 @@ export class Game {
     this.player.visible = false;
     this._setPrompt('');
     this._setShopOpen(false);
+    this.timeScale = 1;
     this.sfx.gameOver(reason);
     const title = reason === 'breach' ? 'BREACHED' : 'FALLEN';
     const subtitle = reason === 'breach'
@@ -808,11 +865,34 @@ export class Game {
   _frame(now) {
     const dt = Math.min(0.033, (now - this._last) / 1000);
     this._last = now;
-    if (this.paused) this._updateCamera();
-    else if (this.running) this.update(dt);
-    else this._idleFx(dt);
+    if (this.paused) {
+      this._updateCamera();
+    } else if (this.running) {
+      if (this.timeScale <= 0) {
+        this._updateSimPaused();
+      } else {
+        const simDt = Math.min(0.05, dt * this.timeScale);
+        this.update(simDt);
+      }
+    } else {
+      this._idleFx(dt);
+    }
     this.render();
     requestAnimationFrame((t) => this._frame(t));
+  }
+
+  /** Frozen sim: shop + tower place/pickup + next wave still work. */
+  _updateSimPaused() {
+    if (this.playerAlive) {
+      this._updateTowerInteract();
+      if (this._wavePhase === 'prep' && this._pressed('KeyR')) {
+        this._requestNextWave();
+      }
+    }
+    this._updateSpeechBubbles();
+    this._updateCamera();
+    this._renderHud();
+    this._keysWas = new Set(this.input.keys);
   }
 
   _idleFx(dt) {
@@ -1136,6 +1216,7 @@ export class Game {
       this._syncCarryMesh();
       this.nav = buildNavGrid(this.level);
       this.sfx.towerPlace();
+      this._renderShop();
       if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
       return;
     }
@@ -1150,10 +1231,15 @@ export class Game {
       this.sfx.uiClick();
       return;
     }
+    if (this.towerStock >= TOWER_CARRY_CAP) {
+      this.sfx.uiClick();
+      return;
+    }
     this._removeTower(near);
-    this.towerStock += 1;
+    this.towerStock = Math.min(TOWER_CARRY_CAP, this.towerStock + 1);
     this._syncCarryMesh();
     this.sfx.towerPickup();
+    this._renderShop();
     if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
   }
 
