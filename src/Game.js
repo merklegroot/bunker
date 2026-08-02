@@ -1864,7 +1864,7 @@ export class Game {
         rig.torso.rotation.y = 0;
         rig.torso.rotation.x = 0;
         rig.torso.rotation.z = 0;
-        rig.torso.position.y = 0.95;
+        rig.torso.position.y = rig.torsoBaseY ?? 0.95;
       }
       if (rig.head) {
         rig.head.rotation.x = 0;
@@ -1969,7 +1969,7 @@ export class Game {
       // Positive X pitches toward +Z (facing), i.e. lean into the punch
       rig.torso.rotation.x = 0.38 * body;
       rig.torso.rotation.z = side * 0.06 * body;
-      rig.torso.position.y = 0.95 - 0.06 * body;
+      rig.torso.position.y = (rig.torsoBaseY ?? 0.95) - 0.06 * body;
     }
 
     // Chin tucks behind the punching shoulder
@@ -2141,6 +2141,8 @@ export class Game {
       poundPhase: null,
       poundT: 0,
       clubGrabCd: isLeader ? 1.2 + Math.random() : 0,
+      rampageT: 0,
+      towerSeekCd: isLeader ? 1.5 + Math.random() : 0,
       speedBoostT: 0,
     });
     if (isLeader) {
@@ -2517,20 +2519,29 @@ export class Game {
           }
         }
       } else if (!tearing && !holding && !beheading && !pounding) {
-        // March the gate (or wander). Clubbing invaders keep the body and keep moving.
+        // March / rampage. Clubbing invaders keep the body and keep moving.
+        const isLeader = e.kind === 'leader';
         if (!downed && !stunned && !clubbing && e.civHuntCd <= 0 && this.spaniards.length > 0) {
-          e.civHuntCd = 1.6 + Math.random() * 1.8;
+          // Boss hunts constantly; rank-and-file peel off less often
+          e.civHuntCd = isLeader
+            ? 0.25 + Math.random() * 0.45
+            : 1.6 + Math.random() * 1.8;
           this._maybeHuntCivilian(e);
         }
 
         if (!downed && !stunned && !e.swimming && e.speechCd <= 0) {
-          if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_MARCH_LINES));
+          if (Math.random() < 0.4) this._sayInvader(e, randPick(isLeader ? LEADER_LINES : INVADER_MARCH_LINES));
           else e.speechCd = 1.2 + Math.random() * 2;
         }
 
         let tx;
         let tz;
-        if (this.debugGatesClosed) {
+        if (isLeader && !e.swimming) {
+          // Prefer causing havoc; only gradually commit to the gate
+          const point = this._leaderRampagePoint(e, dest, dt);
+          tx = point.x;
+          tz = point.z;
+        } else if (this.debugGatesClosed) {
           // Stay on whichever side of the gate they're on — never path through it
           e.wanderCd = Math.max(0, (e.wanderCd ?? 0) - dt);
           const nearWander = e.wanderTx != null
@@ -2616,7 +2627,9 @@ export class Game {
         mz /= mLen;
         const swimSlow = e.swimming ? 0.55 : 1;
         const hunting = !!e.civTarget && e.aggroTimer <= 0;
+        const rampaging = e.kind === 'leader' && e.aggroTimer <= 0 && !hunting;
         let spd = aggressive ? e.speed * 1.15 : hunting ? e.speed * 1.25 : e.speed;
+        if (rampaging) spd *= 0.88; // linger while causing havoc
         if (e.charging) spd = e.speed * 2.35;
         else if (e.speedBoostT > 0) spd *= 1.35;
         moveSpeed = spd * swimSlow;
@@ -2927,6 +2940,8 @@ export class Game {
     e.rallyCd = Math.max(0, (e.rallyCd || 0) - dt);
     e.chargeCd = Math.max(0, (e.chargeCd || 0) - dt);
     e.poundCd = Math.max(0, (e.poundCd || 0) - dt);
+    e.towerSeekCd = Math.max(0, (e.towerSeekCd || 0) - dt);
+    if (!e.swimming) e.rampageT = (e.rampageT || 0) + dt;
 
     if (e.charging) {
       e.chargeT = Math.max(0, (e.chargeT || 0) - dt);
@@ -2953,6 +2968,28 @@ export class Game {
     if (e.rallyCd <= 0 && !e.weaponCiv) {
       e.rallyCd = 7.5 + Math.random() * 3.5;
       this._leaderRally(e);
+    }
+
+    // Smash towers on sight — part of the rampage, not a gate rush
+    if (
+      e.aggroTimer <= 0
+      && !e.civTarget
+      && !e.charging
+      && e.towerSeekCd <= 0
+      && this.towers.length > 0
+    ) {
+      e.towerSeekCd = 2.2 + Math.random() * 1.8;
+      const tower = this._nearestPlacedTower(e.mesh.position.x, e.mesh.position.z);
+      if (tower) {
+        const d = Math.hypot(
+          tower.mesh.position.x - e.mesh.position.x,
+          tower.mesh.position.z - e.mesh.position.z,
+        );
+        if (d < 11) {
+          this._enrage(e, AGGRO_DURATION * 1.6, 'tower');
+          return;
+        }
+      }
     }
 
     const fighting = e.aggroTimer > 0 && e.aggroTarget !== 'tower' && this.playerAlive;
@@ -3006,6 +3043,75 @@ export class Game {
       this._sayInvader(e, randPick(LEADER_LINES));
       this.sfx.macheteDraw();
     }
+  }
+
+  /** 0 = pure rampage, 1 = fully committed to the gate. */
+  _leaderGatePull(e) {
+    const t = e.rampageT || 0;
+    let pull = 0;
+    if (t > 20) pull = Math.min(1, (t - 20) / 55);
+    // Nothing left to wreck → hurry through
+    if (this.spaniards.length === 0 && this.towers.length === 0) {
+      pull = Math.max(pull, Math.min(1, 0.35 + t / 18));
+    }
+    if (this.debugGatesClosed) pull = 0;
+    return pull;
+  }
+
+  /**
+   * Boss pathing: chase civilians / towers first, drift toward the gate over time.
+   */
+  _leaderRampagePoint(e, dest, dt) {
+    e.wanderCd = Math.max(0, (e.wanderCd ?? 0) - dt);
+    const pull = this._leaderGatePull(e);
+    const near = e.wanderTx != null
+      && Math.hypot(e.mesh.position.x - e.wanderTx, e.mesh.position.z - e.wanderTz) < 1.4;
+
+    if (e.wanderTx == null || e.wanderCd <= 0 || near) {
+      let ix = e.mesh.position.x + (Math.random() - 0.5) * 10;
+      let iz = e.mesh.position.z - 2 - Math.random() * 6;
+
+      let bestD = 14;
+      let found = false;
+      for (const s of this.spaniards) {
+        if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
+        const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+        if (d < bestD) {
+          bestD = d;
+          ix = s.mesh.position.x;
+          iz = s.mesh.position.z;
+          found = true;
+        }
+      }
+      if (!found || bestD > 9) {
+        for (const t of this.towers) {
+          if (!t || t.hp <= 0) continue;
+          const d = Math.hypot(t.mesh.position.x - e.mesh.position.x, t.mesh.position.z - e.mesh.position.z);
+          if (d < bestD) {
+            bestD = d;
+            ix = t.mesh.position.x;
+            iz = t.mesh.position.z;
+            found = true;
+          }
+        }
+      }
+      if (!found) {
+        const shore = this.level.shoreLine;
+        const gateZ = this.level.breachZ;
+        ix = clamp(-14 + Math.random() * 28, -16, 16);
+        // Stay in the fight zone early; later samples nudge north toward the gate
+        const zLean = 0.15 + pull * 0.7;
+        iz = shore + (gateZ - shore) * (0.1 + Math.random() * 0.55 * (0.4 + zLean));
+      }
+
+      e.wanderTx = ix + (dest.x - ix) * pull;
+      e.wanderTz = iz + (dest.z - iz) * pull;
+      e.wanderCd = found
+        ? 1.2 + Math.random() * 1.4
+        : 2.0 + Math.random() * 2.5;
+    }
+
+    return { x: e.wanderTx, z: e.wanderTz };
   }
 
   _beginLeaderPound(e) {
@@ -3128,10 +3234,11 @@ export class Game {
     if (!this._atkEnabled('club')) return;
     if (!e || e.kind !== 'leader' || e.civTarget || e.weaponCiv || e.holding || e.tearing || e.beheading) return;
     if (e.aggroTimer > 0 || e.knockdownTimer > 0 || e.stunTimer > 0 || e.pounding) return;
-    if (!this._atkSolo('club') && Math.random() > 0.62) return;
+    // Boss almost always commits; debug-solo still forces it
+    if (!this._atkSolo('club') && Math.random() > 0.92) return;
 
     let bestS = null;
-    let bestD = PUNCH_HUNT_CIV_RANGE + 1.5 + (this._atkSolo('club') ? 5 : 0);
+    let bestD = PUNCH_HUNT_CIV_RANGE + 5 + (this._atkSolo('club') ? 4 : 0);
     for (const s of this.spaniards) {
       if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
       if (this._countHuntersOn(s) > 0) continue;
@@ -3144,7 +3251,7 @@ export class Game {
     if (!bestS) return;
 
     e.civTarget = bestS;
-    e.civHuntTimer = 4.5 + Math.random() * 2;
+    e.civHuntTimer = 6 + Math.random() * 2.5;
     e.civHuntMode = 'club';
     if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
   }
@@ -3413,10 +3520,10 @@ export class Game {
     if (!this._atkEnabled('behead')) return;
     if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.weaponCiv || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
-    if (!this._atkSolo('behead') && Math.random() > 0.42) return;
+    if (e.kind !== 'leader' && !this._atkSolo('behead') && Math.random() > 0.42) return;
 
     let bestS = null;
-    let bestD = PUNCH_HUNT_CIV_RANGE + (this._atkSolo('behead') ? 5 : 0.8);
+    let bestD = PUNCH_HUNT_CIV_RANGE + (e.kind === 'leader' ? 4 : 0) + (this._atkSolo('behead') ? 5 : 0.8);
     for (const s of this.spaniards) {
       if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
       if (this._countHuntersOn(s) > 0) continue;
@@ -3429,7 +3536,7 @@ export class Game {
     if (!bestS) return;
 
     e.civTarget = bestS;
-    e.civHuntTimer = 5.5 + Math.random() * 2;
+    e.civHuntTimer = (e.kind === 'leader' ? 6.5 : 5.5) + Math.random() * 2;
     e.civHuntMode = 'behead';
     if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
   }
