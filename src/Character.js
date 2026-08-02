@@ -387,9 +387,9 @@ export function detachBodyParts(root, partNames = ['head', 'lArm', 'rArm', 'lLeg
 }
 
 /** Flat HP bar above a figure. Hidden at full health. */
-export function createHealthBar() {
+export function createHealthBar(opts = {}) {
   const root = new THREE.Group();
-  root.position.y = 2.15;
+  root.position.y = opts.y ?? 2.15;
 
   const bg = new THREE.Mesh(
     new THREE.PlaneGeometry(0.9, 0.1),
@@ -416,10 +416,10 @@ export function createHealthBar() {
   return root;
 }
 
-export function updateHealthBar(bar, hp, maxHp, parentYaw = 0) {
+export function updateHealthBar(bar, hp, maxHp, parentYaw = 0, parentPitch = 0) {
   if (!bar) return;
-  const ratio = Math.max(0, Math.min(1, hp / maxHp));
-  const injured = hp < maxHp && hp > 0;
+  const ratio = Math.max(0, Math.min(1, hp / Math.max(0.001, maxHp)));
+  const injured = hp < maxHp - 0.001 && hp > 0;
   bar.visible = injured;
   if (!injured) return;
   const fill = bar.userData.fill;
@@ -427,6 +427,6 @@ export function updateHealthBar(bar, hp, maxHp, parentYaw = 0) {
   fill.scale.x = Math.max(0.001, ratio);
   fill.position.x = -w * 0.5 * (1 - ratio);
   fill.material.color.setHex(ratio > 0.5 ? 0x3dffb5 : ratio > 0.25 ? 0xffc24a : 0xff5a4a);
-  // Counter body yaw so the bar stays screen-aligned under the angled camera
-  bar.rotation.set(-0.6, -parentYaw, 0);
+  // Counter body yaw/pitch so the bar stays readable under the angled camera
+  bar.rotation.set(-0.6 - parentPitch, -parentYaw, 0);
 }

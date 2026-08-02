@@ -703,10 +703,11 @@ export class Game {
       t.hp = t.maxHp ?? TOWER_HP;
       t.hitFlash = 0;
       clearTint(t.mesh);
+      updateHealthBar(t.hpBar, t.hp, t.maxHp, t.mesh.rotation.y);
     }
     this._renderHp();
     this._renderStamina();
-    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
+    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y, this.player.rotation.x);
   }
 
   _prepPrompt() {
@@ -1220,12 +1221,15 @@ export class Game {
       mesh.position.set(p.x, 0, p.z);
       mesh.rotation.y = this.player.rotation.y;
       this.world.add(mesh);
+      const hpBar = createHealthBar({ y: 2.55 });
+      mesh.add(hpBar);
       const w = wall(p.x, p.z, 1.05, 1.05, 1.9);
       w._tower = true;
       this.level.walls.push(w);
       this.towers.push({
         mesh,
         wall: w,
+        hpBar,
         fireCd: 0.35,
         hp: TOWER_HP,
         maxHp: TOWER_HP,
@@ -1288,6 +1292,9 @@ export class Game {
       if (best && bow) {
         t.mesh.rotation.y = Math.atan2(best.mesh.position.x - tx, best.mesh.position.z - tz);
       }
+
+      updateHealthBar(t.hpBar, t.hp, t.maxHp, t.mesh.rotation.y);
+
       if (!best || t.fireCd > 0) continue;
 
       const aimY = best.swimming ? 0.35 : 1.05;
@@ -1471,12 +1478,21 @@ export class Game {
   }
 
   _regenPlayer(dt) {
-    if (!this.playerAlive || this.hp <= 0 || this.hp >= this.maxHp) {
+    if (!this.playerAlive || this.hp <= 0) {
       this.regenAcc = 0;
+      if (this.playerHpBar) this.playerHpBar.visible = false;
+      return;
+    }
+    if (this.hp >= this.maxHp) {
+      this.regenAcc = 0;
+      updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y, this.player.rotation.x);
       return;
     }
     this.regenDelay = Math.max(0, this.regenDelay - dt);
-    if (this.regenDelay > 0) return;
+    if (this.regenDelay > 0) {
+      updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y, this.player.rotation.x);
+      return;
+    }
 
     this.regenAcc += HP_REGEN_RATE * dt;
     if (this.regenAcc >= 1) {
@@ -1491,6 +1507,7 @@ export class Game {
       Math.min(this.maxHp, this.hp + this.regenAcc),
       this.maxHp,
       this.player.rotation.y,
+      this.player.rotation.x,
     );
   }
 
@@ -1855,6 +1872,7 @@ export class Game {
     t.hitFlash = 0.14;
     this.shake = Math.min(0.45, this.shake + 0.08);
     this.sfx.punchHit({ hard: damage >= 2 });
+    updateHealthBar(t.hpBar, t.hp, t.maxHp, t.mesh.rotation.y);
     if (t.hp <= 0) {
       this._spark(t.mesh.position.x, t.mesh.position.z, 0xc4a060, 10, 0.35, 1.2);
       this._removeTower(t);
@@ -2206,7 +2224,9 @@ export class Game {
           false,
           e.swimming,
         );
-        updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y);
+        updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
+      } else if (e.hpBar) {
+        updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
       }
 
       // Breach check — reached city gate (downed can't breach)
@@ -2350,7 +2370,7 @@ export class Game {
     }
     this._saySpaniard(s, randPick(FEAR_LINES), true);
     if (!opts.fromPlayer) this.sfx.playerHurt();
-    updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
+    updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
     if (opts.fromPlayer) {
       this._bloodSpray(s.mesh.position.x, s.mesh.position.z, dirX, dirZ, { mild: true });
     }
@@ -2549,7 +2569,7 @@ export class Game {
 
       if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
 
-      if (s.hpBar) updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
+      if (s.hpBar) updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
     }
   }
 
@@ -3121,7 +3141,7 @@ export class Game {
         fleeing,
         false,
       );
-      updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y);
+      updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
       // Friendly wave while greeting (override walk arm after anim)
       if (waving && s.mesh.userData.rig?.rArm) {
         const rig = s.mesh.userData.rig;
@@ -3228,7 +3248,7 @@ export class Game {
     setTimeout(() => { if (this.playerAlive) clearTint(this.player); }, 80);
     this._spark(this.player.position.x, this.player.position.z, COL.blood, 8, 0.32, 1.0);
     this._renderHp();
-    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
+    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y, this.player.rotation.x);
     if (this.hp <= 0) this.gameOver('fallen');
   }
 
