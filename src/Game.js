@@ -65,6 +65,7 @@ const TOWER_FIRE_CD = 0.9;
 const TOWER_DAMAGE = 1;
 const TOWER_HP = 28;
 const TOWER_PICKUP_RANGE = 2.4;
+const TOWER_START_COUNT = 2;
 const ARROW_SPEED = 26;
 const ARROW_LIFE = 1.4;
 
@@ -429,7 +430,9 @@ export class Game {
     this.boats = [];
     this.fx = [];
     this.arrows = [];
-    this.tower = null; // { mesh, wall, fireCd, carried }
+    this.towers = []; // placed towers: { mesh, wall, fireCd, hp, maxHp, hitFlash }
+    this.towerStock = 0; // towers currently carried
+    this._carryMesh = null;
     this._towerGhost = null;
     this._levelRoot = null;
     this._speechLayer = null;
@@ -575,7 +578,7 @@ export class Game {
     this.boats.length = 0;
     this.fx.length = 0;
     this.arrows.length = 0;
-    this._destroyTower();
+    this._clearAllTowers();
     if (this._speechLayer) this._speechLayer.replaceChildren();
   }
 
@@ -617,7 +620,7 @@ export class Game {
     this._loadMap();
     this._spawnSpaniards(8);
     this._civReinforceCd = 4;
-    this._giveTower();
+    this._giveTowers(TOWER_START_COUNT);
     this._enterWavePrep(1);
 
     this.input.keys.clear();
@@ -653,10 +656,14 @@ export class Game {
     this._spawnCd = 0;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
-    this._setPrompt(
-      `<kbd>R</kbd> START WAVE ${wave}`
-      + ` &nbsp;·&nbsp; <kbd>E</kbd> ${this.tower?.carried ? 'PLACE TOWER' : 'PICK UP / PLACE TOWER'}`,
-    );
+    this._setPrompt(this._prepPrompt());
+  }
+
+  _prepPrompt() {
+    const action = this.towerStock > 0
+      ? 'PLACE TOWER'
+      : (this.towers.length > 0 ? 'PICK UP TOWER' : 'PLACE TOWER');
+    return `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>RMB</kbd> ${action}`;
   }
 
   _beginWave(wave) {
@@ -922,15 +929,39 @@ export class Game {
     this._updateFogMask(px, pz);
   }
 
-  _destroyTower() {
-    if (this.tower) {
-      const m = this.tower.mesh;
-      if (m.parent) m.parent.remove(m);
-      if (this.tower.wall && this.level?.walls) {
-        const idx = this.level.walls.indexOf(this.tower.wall);
-        if (idx >= 0) this.level.walls.splice(idx, 1);
+  _towerWallSet() {
+    const set = new Set();
+    for (const t of this.towers) {
+      if (t.wall) set.add(t.wall);
+    }
+    return set;
+  }
+
+  _wallsWithoutTowers() {
+    const skip = this._towerWallSet();
+    if (skip.size === 0) return this.level.walls;
+    return this.level.walls.filter((w) => !skip.has(w));
+  }
+
+  _nearestPlacedTower(x, z, maxDist = Infinity) {
+    let best = null;
+    let bestD = maxDist;
+    for (const t of this.towers) {
+      const d = Math.hypot(t.mesh.position.x - x, t.mesh.position.z - z);
+      if (d < bestD) {
+        bestD = d;
+        best = t;
       }
-      this.tower = null;
+    }
+    return best;
+  }
+
+  _clearAllTowers() {
+    while (this.towers.length) this._removeTower(this.towers[0], { silent: true });
+    this.towerStock = 0;
+    if (this._carryMesh) {
+      if (this._carryMesh.parent) this._carryMesh.parent.remove(this._carryMesh);
+      this._carryMesh = null;
     }
     if (this._towerGhost) {
       this.world.remove(this._towerGhost);
@@ -940,32 +971,51 @@ export class Game {
     this._renderHeld();
   }
 
-  _giveTower() {
-    this._destroyTower();
-    const mesh = createArrowTowerMesh();
-    mesh.scale.setScalar(0.55);
-    this.player.add(mesh);
-    mesh.position.set(0.45, 1.05, -0.35);
-    mesh.rotation.set(0.15, 0.4, 0.1);
-    this.tower = {
-      mesh,
-      wall: null,
-      fireCd: 0,
-      carried: true,
-      hp: TOWER_HP,
-      maxHp: TOWER_HP,
-      hitFlash: 0,
-    };
+  _removeTower(t, { silent = false } = {}) {
+    const idx = this.towers.indexOf(t);
+    if (idx < 0) return;
+    if (t.mesh?.parent) t.mesh.parent.remove(t.mesh);
+    if (t.wall && this.level?.walls) {
+      const wi = this.level.walls.indexOf(t.wall);
+      if (wi >= 0) this.level.walls.splice(wi, 1);
+    }
+    this.towers.splice(idx, 1);
+    if (!silent) this.nav = buildNavGrid(this.level);
+    if (this.towers.length === 0) this._clearTowerAggro();
+  }
+
+  _giveTowers(count = TOWER_START_COUNT) {
+    this._clearAllTowers();
+    this.towerStock = count;
+    this._syncCarryMesh();
     this._towerGhost = createArrowTowerMesh({ ghost: true });
     this._towerGhost.visible = false;
     this.world.add(this._towerGhost);
     this._renderHeld();
   }
 
+  _syncCarryMesh() {
+    if (this.towerStock > 0) {
+      if (!this._carryMesh) {
+        this._carryMesh = createArrowTowerMesh();
+        this._carryMesh.scale.setScalar(0.55);
+        this._carryMesh.position.set(0.45, 1.05, -0.35);
+        this._carryMesh.rotation.set(0.15, 0.4, 0.1);
+        this.player.add(this._carryMesh);
+      }
+      this._carryMesh.visible = true;
+    } else if (this._carryMesh) {
+      this._carryMesh.visible = false;
+    }
+  }
+
   _renderHeld() {
     if (!this.el.heldWrap) return;
-    const carrying = !!this.tower?.carried;
-    this.el.heldWrap.classList.toggle('hidden', !carrying);
+    const n = this.towerStock;
+    this.el.heldWrap.classList.toggle('hidden', n <= 0);
+    if (this.el.held) {
+      this.el.held.textContent = n > 1 ? `ARROW TOWER ×${n}` : 'ARROW TOWER';
+    }
   }
 
   _towerPlacePos() {
@@ -983,17 +1033,17 @@ export class Game {
     if (z > this.level.waterLine - 0.3) return false;
     if (z < this.level.breachZ + 3) return false;
     if (Math.abs(x) > this.level.HALF - 1.5) return false;
-    // Ignore existing tower wall if any
-    const walls = this.level.walls.filter((w) => w !== this.tower?.wall);
-    if (circleHitsWall(x, z, 0.7, walls)) return false;
+    if (circleHitsWall(x, z, 0.7, this.level.walls)) return false;
+    // Keep towers from stacking on each other
+    for (const t of this.towers) {
+      if (Math.hypot(t.mesh.position.x - x, t.mesh.position.z - z) < 2.2) return false;
+    }
     return true;
   }
 
   _updateTowerInteract() {
-    if (!this.tower) return;
-
-    // Ghost preview while carrying
-    if (this.tower.carried && this._towerGhost) {
+    // Ghost preview while carrying at least one
+    if (this.towerStock > 0 && this._towerGhost) {
       const p = this._towerPlacePos();
       const ok = this._canPlaceTower(p.x, p.z);
       this._towerGhost.visible = true;
@@ -1008,111 +1058,101 @@ export class Game {
       this._towerGhost.visible = false;
     }
 
-    if (!this._pressed('KeyE')) return;
+    if (!this.input.consumeRightClick()) return;
 
-    if (this.tower.carried) {
+    if (this.towerStock > 0) {
       const p = this._towerPlacePos();
       if (!this._canPlaceTower(p.x, p.z)) {
         this.sfx.uiClick();
         return;
       }
-      // Detach from player → world
-      this.player.remove(this.tower.mesh);
-      this.tower.mesh.scale.setScalar(1);
-      this.tower.mesh.rotation.set(0, this.player.rotation.y, 0);
-      this.tower.mesh.position.set(p.x, 0, p.z);
-      this.world.add(this.tower.mesh);
+      const mesh = createArrowTowerMesh();
+      mesh.position.set(p.x, 0, p.z);
+      mesh.rotation.y = this.player.rotation.y;
+      this.world.add(mesh);
       const w = wall(p.x, p.z, 1.05, 1.05, 1.9);
       w._tower = true;
       this.level.walls.push(w);
-      this.tower.wall = w;
-      this.tower.carried = false;
-      this.tower.fireCd = 0.35;
+      this.towers.push({
+        mesh,
+        wall: w,
+        fireCd: 0.35,
+        hp: TOWER_HP,
+        maxHp: TOWER_HP,
+        hitFlash: 0,
+      });
+      this.towerStock -= 1;
+      this._syncCarryMesh();
       this.nav = buildNavGrid(this.level);
       this.sfx.towerPlace();
       this._renderHeld();
-      if (this._wavePhase === 'prep') {
-        this._setPrompt(`<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>E</kbd> PICK UP TOWER`);
-      }
+      if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
       return;
     }
 
-    // Pick up if close enough
-    const dx = this.tower.mesh.position.x - this.player.position.x;
-    const dz = this.tower.mesh.position.z - this.player.position.z;
-    if (Math.hypot(dx, dz) > TOWER_PICKUP_RANGE) {
+    // Pick up nearest placed tower in range
+    const near = this._nearestPlacedTower(
+      this.player.position.x,
+      this.player.position.z,
+      TOWER_PICKUP_RANGE,
+    );
+    if (!near) {
       this.sfx.uiClick();
       return;
     }
-    if (this.tower.wall) {
-      const idx = this.level.walls.indexOf(this.tower.wall);
-      if (idx >= 0) this.level.walls.splice(idx, 1);
-      this.tower.wall = null;
-      this.nav = buildNavGrid(this.level);
-    }
-    this.world.remove(this.tower.mesh);
-    this.tower.mesh.scale.setScalar(0.55);
-    this.tower.mesh.position.set(0.45, 1.05, -0.35);
-    this.tower.mesh.rotation.set(0.15, 0.4, 0.1);
-    this.player.add(this.tower.mesh);
-    this.tower.carried = true;
-    this._clearTowerAggro();
+    this._removeTower(near);
+    this.towerStock += 1;
+    this._syncCarryMesh();
     this.sfx.towerPickup();
     this._renderHeld();
-    if (this._wavePhase === 'prep') {
-      this._setPrompt(`<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>E</kbd> PLACE TOWER`);
-    }
+    if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
   }
 
   _updateTower(dt) {
-    if (!this.tower || this.tower.carried) return;
-    this.tower.fireCd = Math.max(0, this.tower.fireCd - dt);
-    this.tower.hitFlash = Math.max(0, (this.tower.hitFlash || 0) - dt);
-    if (this.tower.hitFlash > 0) setTint(this.tower.mesh, 0xffffff);
-    else clearTint(this.tower.mesh);
+    const losWalls = this._wallsWithoutTowers();
+    for (const t of this.towers) {
+      t.fireCd = Math.max(0, t.fireCd - dt);
+      t.hitFlash = Math.max(0, (t.hitFlash || 0) - dt);
+      if (t.hitFlash > 0) setTint(t.mesh, 0xffffff);
+      else clearTint(t.mesh);
 
-    const bow = this.tower.mesh.userData.bow;
-    const tx = this.tower.mesh.position.x;
-    const tz = this.tower.mesh.position.z;
+      const bow = t.mesh.userData.bow;
+      const tx = t.mesh.position.x;
+      const tz = t.mesh.position.z;
 
-    // Prefer nearest invaders (exclude own footprint from LOS)
-    const losWalls = this.tower.wall
-      ? this.level.walls.filter((w) => w !== this.tower.wall)
-      : this.level.walls;
-    let best = null;
-    let bestD = TOWER_RANGE;
-    for (const e of this.enemies) {
-      if (e.knockdownTimer > 0 || e.hp <= 0) continue;
-      const d = Math.hypot(e.mesh.position.x - tx, e.mesh.position.z - tz);
-      if (d > bestD) continue;
-      if (!hasLineOfSight(tx, tz, e.mesh.position.x, e.mesh.position.z, losWalls)) continue;
-      best = e;
-      bestD = d;
+      let best = null;
+      let bestD = TOWER_RANGE;
+      for (const e of this.enemies) {
+        if (e.knockdownTimer > 0 || e.hp <= 0) continue;
+        const d = Math.hypot(e.mesh.position.x - tx, e.mesh.position.z - tz);
+        if (d > bestD) continue;
+        if (!hasLineOfSight(tx, tz, e.mesh.position.x, e.mesh.position.z, losWalls)) continue;
+        best = e;
+        bestD = d;
+      }
+
+      if (best && bow) {
+        t.mesh.rotation.y = Math.atan2(best.mesh.position.x - tx, best.mesh.position.z - tz);
+      }
+      if (!best || t.fireCd > 0) continue;
+
+      const aimY = best.swimming ? 0.35 : 1.05;
+      const fromY = 2.1;
+      const dx = best.mesh.position.x - tx;
+      const dy = aimY - fromY;
+      const dz = best.mesh.position.z - tz;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      this._spawnArrow(
+        tx + (dx / len) * 0.5,
+        fromY,
+        tz + (dz / len) * 0.5,
+        (dx / len) * ARROW_SPEED,
+        (dy / len) * ARROW_SPEED,
+        (dz / len) * ARROW_SPEED,
+      );
+      t.fireCd = TOWER_FIRE_CD;
+      this.sfx.arrowFire();
     }
-
-    if (best && bow) {
-      const ang = Math.atan2(best.mesh.position.x - tx, best.mesh.position.z - tz);
-      this.tower.mesh.rotation.y = ang;
-    }
-
-    if (!best || this.tower.fireCd > 0) return;
-
-    const aimY = best.swimming ? 0.35 : 1.05;
-    const fromY = 2.1;
-    const dx = best.mesh.position.x - tx;
-    const dy = aimY - fromY;
-    const dz = best.mesh.position.z - tz;
-    const len = Math.hypot(dx, dy, dz) || 1;
-    this._spawnArrow(
-      tx + (dx / len) * 0.5,
-      fromY,
-      tz + (dz / len) * 0.5,
-      (dx / len) * ARROW_SPEED,
-      (dy / len) * ARROW_SPEED,
-      (dz / len) * ARROW_SPEED,
-    );
-    this.tower.fireCd = TOWER_FIRE_CD;
-    this.sfx.arrowFire();
   }
 
   _spawnArrow(x, y, z, vx, vy, vz) {
@@ -1129,6 +1169,7 @@ export class Game {
   }
 
   _updateArrows(dt) {
+    const walls = this._wallsWithoutTowers();
     for (let i = this.arrows.length - 1; i >= 0; i--) {
       const a = this.arrows[i];
       const ox = a.mesh.position.x;
@@ -1142,13 +1183,8 @@ export class Game {
       a.mesh.rotation.x = Math.atan2(-a.vy, Math.hypot(a.vx, a.vz));
 
       let dead = a.life <= 0 || a.mesh.position.y < 0.05;
-      if (!dead) {
-        const walls = this.tower?.wall
-          ? this.level.walls.filter((w) => w !== this.tower.wall)
-          : this.level.walls;
-        if (segmentHitsWall(ox, oz, a.mesh.position.x, a.mesh.position.z, walls, 0.05)) {
-          dead = true;
-        }
+      if (!dead && segmentHitsWall(ox, oz, a.mesh.position.x, a.mesh.position.z, walls, 0.05)) {
+        dead = true;
       }
 
       if (!dead) {
@@ -1619,17 +1655,20 @@ export class Game {
     if (e.hp <= 0) this._killEnemy(index, { fromPunch: !!opts.fromPunch, dirX, dirZ });
   }
 
-  _hurtTower(damage) {
-    if (!this.tower || this.tower.carried) return;
-    this.tower.hp = Math.max(0, (this.tower.hp ?? TOWER_HP) - damage);
-    this.tower.hitFlash = 0.14;
+  _hurtTower(t, damage) {
+    if (!t || !this.towers.includes(t)) return;
+    t.hp = Math.max(0, (t.hp ?? TOWER_HP) - damage);
+    t.hitFlash = 0.14;
     this.shake = Math.min(0.45, this.shake + 0.08);
     this.sfx.punchHit({ hard: damage >= 2 });
-    if (this.tower.hp <= 0) {
-      this._spark(this.tower.mesh.position.x, this.tower.mesh.position.z, 0xc4a060, 10, 0.35, 1.2);
-      this._clearTowerAggro();
-      this._destroyTower();
-      this._setPrompt('TOWER DESTROYED');
+    if (t.hp <= 0) {
+      this._spark(t.mesh.position.x, t.mesh.position.z, 0xc4a060, 10, 0.35, 1.2);
+      this._removeTower(t);
+      if (this.towers.length === 0 && this.towerStock === 0) {
+        this._setPrompt('TOWERS DESTROYED');
+      } else if (this._wavePhase === 'prep') {
+        this._setPrompt(this._prepPrompt());
+      }
     }
   }
 
@@ -1677,7 +1716,7 @@ export class Game {
         e.aggroTarget = null;
       }
       // Tower aggro only while a placed tower exists.
-      if (e.aggroTarget === 'tower' && (!this.tower || this.tower.carried)) {
+      if (e.aggroTarget === 'tower' && this.towers.length === 0) {
         e.aggroTimer = 0;
         e.aggroTarget = null;
         e.panicked = false;
@@ -1718,18 +1757,19 @@ export class Game {
       const stunned = e.stunTimer > 0;
       const tearing = !!e.tearing;
       const holding = !!e.holding;
+      const towerTarget = e.aggroTarget === 'tower'
+        ? this._nearestPlacedTower(e.mesh.position.x, e.mesh.position.z)
+        : null;
       const aggressive = !downed && !stunned && !tearing && !holding && e.aggroTimer > 0
-        && (e.aggroTarget === 'tower'
-          ? !!(this.tower && !this.tower.carried)
-          : this.playerAlive);
+        && (e.aggroTarget === 'tower' ? !!towerTarget : this.playerAlive);
 
       if (downed || stunned || tearing || holding) {
         // No AI — knockback only (hold/tear posing happens in dedicated updates)
         mx = 0;
         mz = 0;
-      } else if (aggressive && e.aggroTarget === 'tower' && this.tower && !this.tower.carried) {
-        const tx = this.tower.mesh.position.x;
-        const tz = this.tower.mesh.position.z;
+      } else if (aggressive && e.aggroTarget === 'tower' && towerTarget) {
+        const tx = towerTarget.mesh.position.x;
+        const tz = towerTarget.mesh.position.z;
         const punchReach = e.r + 0.75;
         const holdDist = punchReach - 0.15;
         const dist = Math.hypot(tx - e.mesh.position.x, tz - e.mesh.position.z) || 1;
@@ -1749,7 +1789,7 @@ export class Game {
 
         if (e.biteCd <= 0 && dist < punchReach) {
           e.biteCd = 0.7 + Math.random() * 0.3;
-          this._hurtTower(e.damage);
+          this._hurtTower(towerTarget, e.damage);
           this._spark(tx, tz, 0xc4a060, 5, 0.22, 1.1);
           if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
         }
@@ -3191,10 +3231,10 @@ export class Game {
       ctx.fill();
     }
 
-    // Arrow tower (placed)
-    if (this.tower && !this.tower.carried) {
-      const x = toX(this.tower.mesh.position.x);
-      const y = toY(this.tower.mesh.position.z);
+    // Arrow towers (placed)
+    for (const t of this.towers) {
+      const x = toX(t.mesh.position.x);
+      const y = toY(t.mesh.position.z);
       ctx.fillStyle = '#d4b878';
       ctx.fillRect(x - 3, y - 3, 6, 6);
       ctx.strokeStyle = 'rgba(8, 22, 32, 0.7)';
