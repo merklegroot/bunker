@@ -28,7 +28,9 @@ const STAMINA_EXHAUST_DELAY = 1.2;
 const PLAYER_RADIUS = 0.4;
 const MAX_HP = 6;
 const HP_REGEN_DELAY = 2.0;
-const HP_REGEN_RATE = 0.4; // hearts per second after delay
+const HP_REGEN_RATE = 0.4; // player hearts per second after delay
+/** Living units (invaders / civilians): fraction of max HP healed per second after delay. */
+const UNIT_REGEN_FRAC = 0.1;
 const VIEW_NEAR = 10;
 const VIEW_FAR = 24;
 const BULLET_KNOCKBACK = 0.28;
@@ -1511,6 +1513,20 @@ export class Game {
     );
   }
 
+  /** Gradual HP restore for invaders / civilians after combat delay. */
+  _regenLiving(ent, dt) {
+    if (!ent || ent.hp <= 0 || ent.hp >= ent.maxHp) return;
+    ent.regenDelay = Math.max(0, (ent.regenDelay ?? 0) - dt);
+    if (ent.regenDelay > 0) return;
+    const rate = Math.max(0.25, (ent.maxHp || 1) * UNIT_REGEN_FRAC);
+    ent.hp = Math.min(ent.maxHp, ent.hp + rate * dt);
+  }
+
+  _resetRegen(ent) {
+    if (!ent) return;
+    ent.regenDelay = HP_REGEN_DELAY;
+  }
+
   _heartSvg(fill, id) {
     // fill 0..1 — classic heart path, fill rises from the bottom
     const t = clamp(fill, 0, 1);
@@ -1806,6 +1822,7 @@ export class Game {
       speechLife: 0,
       tearing: null,
       holding: null,
+      regenDelay: 0,
     });
   }
 
@@ -1848,6 +1865,7 @@ export class Game {
     if (!e) return;
     const aggro = opts.aggro === 'tower' ? 'tower' : 'player';
     e.hp -= damage;
+    this._resetRegen(e);
     e.hitFlash = 0.12;
     this._enrage(e, AGGRO_DURATION, aggro);
     this._witnessAttack(e, index, aggro);
@@ -1917,6 +1935,7 @@ export class Game {
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
+      this._regenLiving(e, dt);
       e.hitFlash = Math.max(0, e.hitFlash - dt);
       e.biteCd = Math.max(0, e.biteCd - dt);
       e.aggroTimer = Math.max(0, e.aggroTimer - dt);
@@ -2336,6 +2355,7 @@ export class Game {
       tearing: null,
       heldBy: null,
       holdTimer: 0,
+      regenDelay: 0,
     };
     this.spaniards.push(s);
     return s;
@@ -2355,6 +2375,7 @@ export class Game {
     // Being held — still take damage but no flee knockback
     const held = !!s.heldBy;
     s.hp -= damage;
+    this._resetRegen(s);
     s.hitFlash = 0.14;
     s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
     if (!held) {
@@ -2968,6 +2989,7 @@ export class Game {
   _updateSpaniards(dt) {
     for (let i = this.spaniards.length - 1; i >= 0; i--) {
       const s = this.spaniards[i];
+      this._regenLiving(s, dt);
       s.hitFlash = Math.max(0, s.hitFlash - dt);
       s.fearTimer = Math.max(0, s.fearTimer - dt);
       s.speechCd = Math.max(0, s.speechCd - dt);
@@ -2980,7 +3002,10 @@ export class Game {
       if (s.speechLife <= 0 && s.bubble) s.bubble.classList.remove('on');
 
       // Being pulled apart or held — posing handled elsewhere
-      if (s.tearing || s.heldBy) continue;
+      if (s.tearing || s.heldBy) {
+        updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
+        continue;
+      }
 
       let mx = 0;
       let mz = 0;
