@@ -127,6 +127,78 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #prompt.on { opacity: 1; }
 #prompt kbd { font: inherit; color: var(--ink); margin-right: 8px; }
 
+#shop {
+  position: absolute;
+  left: 16px;
+  top: 118px;
+  width: 220px;
+  padding: 12px;
+  background: rgba(8, 20, 28, 0.84);
+  border: 1px solid rgba(232, 240, 244, 0.14);
+  box-shadow: 0 10px 32px rgba(4, 12, 18, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+#shop.hidden { display: none; }
+.shopHead {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 10px; gap: 8px;
+}
+.shopTitle {
+  font-size: 11px; font-weight: 700; letter-spacing: .22em; color: var(--ink);
+}
+.shopGoldLabel {
+  font-size: 10px; letter-spacing: .12em; color: rgba(200, 220, 230, 0.7);
+}
+.shopGoldLabel b { color: #f0d090; font-size: 14px; letter-spacing: .04em; }
+#buyTowerBtn {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px 10px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 1px solid rgba(212, 184, 120, 0.45);
+  background: rgba(212, 184, 120, 0.08);
+  color: var(--ink);
+  font: inherit;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+#buyTowerBtn .itemName {
+  grid-column: 1; grid-row: 1;
+  font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--sand);
+}
+#buyTowerBtn .itemDesc {
+  grid-column: 1; grid-row: 2;
+  font-size: 10px; letter-spacing: .06em; color: rgba(200, 220, 230, 0.65);
+}
+#buyTowerBtn .itemCost {
+  grid-column: 2; grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 11px; letter-spacing: .1em; color: #f0d090; white-space: nowrap;
+}
+#buyTowerBtn .itemCost b { font-size: 16px; }
+#buyTowerBtn:hover:not(:disabled) {
+  background: rgba(212, 184, 120, 0.16);
+  border-color: rgba(232, 196, 106, 0.7);
+}
+#buyTowerBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: rgba(122, 154, 170, 0.25);
+}
+.shopHint {
+  margin-top: 10px;
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: rgba(200, 220, 230, 0.55);
+}
+.shopHint kbd { font: inherit; color: var(--sea); margin-right: 4px; }
+
 #speechLayer {
   position: absolute; inset: 0;
   pointer-events: none; overflow: hidden;
@@ -172,15 +244,47 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 .speech.fear::after { border-top-color: rgba(255, 236, 230, 0.96); }
 .speech.foe::after { border-top-color: rgba(40, 22, 18, 0.92); }
 
-#hints { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
-  font-size: 11px; letter-spacing: .1em; color: var(--dim); white-space: nowrap; }
-#hints kbd { font: inherit; color: var(--accent); margin: 0 2px 0 10px; }
+#hints {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px 2px;
+  max-width: none;
+  padding: 6px 14px;
+  font-size: 12px;
+  letter-spacing: .06em;
+  color: rgba(220, 232, 238, 0.82);
+  white-space: normal;
+  background: rgba(8, 20, 28, 0.88);
+  border: none;
+  border-top: 1px solid rgba(232, 240, 244, 0.14);
+  box-shadow: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+#hints kbd {
+  font: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: #f0d090;
+  margin: 0 4px 0 10px;
+  padding: 2px 6px;
+  background: rgba(232, 196, 106, 0.1);
+  border: 1px solid rgba(232, 196, 106, 0.35);
+}
 #hints kbd:first-child { margin-left: 0; }
 
 #radarWrap {
   position: absolute;
   right: 18px;
-  bottom: 18px;
+  bottom: 44px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -242,13 +346,25 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #restartBtn:hover { background: rgba(232,160,64,.14); }
 
 @media (max-width: 720px) {
-  #hints { font-size: 9px; letter-spacing: .04em; }
+  #hints {
+    font-size: 10px;
+    letter-spacing: .04em;
+    bottom: 0;
+    padding: 5px 10px;
+    gap: 2px;
+  }
+  #hints kbd {
+    font-size: 9px;
+    margin-left: 6px;
+    padding: 1px 4px;
+  }
   #hudTop { padding: 10px; gap: 8px; }
   #vitals { padding: 8px 10px; min-width: 0; }
+  #shop { left: 10px; top: auto; bottom: 44px; width: min(220px, calc(100vw - 140px)); }
   #scoreWrap, #waveWrap, #ammoWrap, #goldWrap, #breachedWrap, #enemiesWrap {
     min-width: 56px; padding: 6px 10px;
   }
   #score, #wave, #ammo, #gold, #breached, #enemies { font-size: 17px; }
   #radar { width: 110px; height: 110px; }
-  #radarWrap { right: 10px; bottom: 12px; }
+  #radarWrap { right: 10px; bottom: 40px; }
 }
