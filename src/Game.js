@@ -1041,7 +1041,8 @@ export class Game {
     if (plantLeg) plantLeg.rotation.x = 0.28 * body;
 
     // Hips/shoulders: punch-side shoulder comes forward; slight lean + crouch
-    const torsoYaw = -side * 0.58 * body;
+    // Keep yaw modest so the guard shoulder isn't dragged through a big arc
+    const torsoYaw = -side * 0.32 * body;
     if (rig.torso) {
       rig.torso.rotation.y = torsoYaw;
       // Positive X pitches toward +Z (facing), i.e. lean into the punch
@@ -1062,12 +1063,13 @@ export class Game {
     punchArm.rotation.z = side * (0.14 * (1 - arm) + 0.04);
     if (punchElbow) punchElbow.rotation.x = -0.55 + arm * 0.5;
 
-    // Guard arm: locked local pose + cancel torso yaw so it doesn't swing with the twist
-    // (arms are parented to torso)
-    guardArm.rotation.x = -0.85;
+    // Guard arm: stay glued to the chin — cancel torso lean/yaw (arms parented to torso)
+    // so the off-hand does not ride the punch.
+    const torsoPitch = rig.torso ? rig.torso.rotation.x : 0;
+    guardArm.rotation.x = -0.9 - torsoPitch;
     guardArm.rotation.y = -torsoYaw;
-    guardArm.rotation.z = -side * 0.35;
-    if (guardElbow) guardElbow.rotation.x = -0.95;
+    guardArm.rotation.z = -side * 0.22;
+    if (guardElbow) guardElbow.rotation.x = -1.05;
   }
 
   _meleeSwing(dirX, dirZ) {
