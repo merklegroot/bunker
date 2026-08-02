@@ -66,12 +66,12 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 
 #meta { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
-#scoreWrap, #waveWrap, #ammoWrap, #breachedWrap, #enemiesWrap { text-align: right; min-width: 64px; }
-#scoreLabel, #waveLabel, #ammoLabel, #breachedLabel, #enemiesLabel {
+#scoreWrap, #waveWrap, #ammoWrap, #goldWrap, #breachedWrap, #enemiesWrap { text-align: right; min-width: 64px; }
+#scoreLabel, #waveLabel, #ammoLabel, #goldLabel, #breachedLabel, #enemiesLabel {
   display: block; font-size: 10px; letter-spacing: .22em; color: var(--dim); }
-#score, #wave, #ammo, #breached, #enemies { font-size: 24px; font-weight: 700; letter-spacing: .04em; color: var(--accent);
+#score, #wave, #ammo, #gold, #breached, #enemies { font-size: 24px; font-weight: 700; letter-spacing: .04em; color: var(--accent);
   text-shadow: 0 0 16px rgba(232,196,106,.25); }
-#ammo { color: var(--sand); text-shadow: 0 0 16px rgba(212,184,120,.3); }
+#ammo, #gold { color: var(--sand); text-shadow: 0 0 16px rgba(212,184,120,.3); }
 #enemies { color: var(--danger); text-shadow: 0 0 16px rgba(224,80,64,.3); }
 #wave { color: var(--sea); text-shadow: 0 0 16px rgba(74,160,192,.3); }
 #breached { color: var(--warn); text-shadow: 0 0 16px rgba(232,160,64,.3); }
@@ -203,7 +203,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 @media (max-width: 720px) {
   #hints { font-size: 9px; letter-spacing: .04em; }
   #meta { gap: 10px; }
-  #score, #wave, #ammo, #breached, #enemies { font-size: 18px; }
+  #score, #wave, #ammo, #gold, #breached, #enemies { font-size: 18px; }
   #radar { width: 110px; height: 110px; }
   #radarWrap { right: 10px; bottom: 12px; }
 }

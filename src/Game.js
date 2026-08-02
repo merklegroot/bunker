@@ -221,6 +221,7 @@ const INVADER_KINDS = {
     radius: 0.36,
     damage: 1,
     score: 10,
+    gold: 4,
     skin: 0xb89060,
   },
   sturdy: {
@@ -230,6 +231,7 @@ const INVADER_KINDS = {
     radius: 0.42,
     damage: 2,
     score: 18,
+    gold: 8,
     skin: 0xa87850,
   },
   sprinter: {
@@ -239,6 +241,7 @@ const INVADER_KINDS = {
     radius: 0.32,
     damage: 1,
     score: 14,
+    gold: 6,
     skin: 0xc4a070,
   },
 };
@@ -402,6 +405,7 @@ export class Game {
     this.paused = false;
     this.time = 0;
     this.score = 0;
+    this.gold = 0;
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
@@ -508,6 +512,7 @@ export class Game {
       restartBtn: document.getElementById('restartBtn'),
       finalScore: document.getElementById('finalScore'),
       score: document.getElementById('score'),
+      gold: document.getElementById('gold'),
       wave: document.getElementById('wave'),
       breached: document.getElementById('breached'),
       enemies: document.getElementById('enemies'),
@@ -588,6 +593,7 @@ export class Game {
     this._clearEntities();
 
     this.score = 0;
+    this.gold = 0;
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
@@ -670,7 +676,12 @@ export class Game {
     this.wave = wave;
     this._wavePhase = 'active';
     this._waveSpawning = true;
-    this._toSpawn = Math.min(40, 5 + wave * 3 + Math.floor(Math.random() * 3));
+    // Wave 1 stays light so the player can learn the beach
+    const base = wave <= 1
+      ? 3
+      : 4 + wave * 2;
+    const jitter = wave <= 1 ? 2 : 3;
+    this._toSpawn = Math.min(40, base + Math.floor(Math.random() * jitter));
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
@@ -724,7 +735,7 @@ export class Game {
     this._showMenu({
       title,
       subtitle,
-      finalScore: `WAVE  ${this.wave}   ·   STOPPED  ${this.score}   ·   THROUGH  ${this.breached}`,
+      finalScore: `WAVE  ${this.wave}   ·   GOLD  ${this.gold}   ·   THROUGH  ${this.breached}`,
       mode: 'end',
     });
   }
@@ -1576,6 +1587,7 @@ export class Game {
       speed: def.speed + Math.random() * 0.35,
       damage: def.damage,
       score: def.score + this.wave * 2,
+      gold: def.gold + Math.floor(this.wave * 0.5),
       hitFlash: 0,
       biteCd: 0.4 + Math.random() * 0.4,
       aggroTimer: 0,
@@ -3012,6 +3024,7 @@ export class Game {
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
     this.score += e.score;
+    this.gold += e.gold || 0;
   }
 
   _hurt(amount, dirX = 0, dirZ = 0) {
@@ -3137,6 +3150,7 @@ export class Game {
 
   _renderHud() {
     if (this.el.score) this.el.score.textContent = String(this.score);
+    if (this.el.gold) this.el.gold.textContent = String(this.gold);
     if (this.el.wave) this.el.wave.textContent = String(this.wave);
     if (this.el.breached) {
       this.el.breached.textContent = `${this.breached}/${this.breachLimit}`;
