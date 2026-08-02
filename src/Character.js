@@ -64,8 +64,12 @@ export function createPerson(palette, opts = {}) {
     rArm: null,
     lElbow: null,
     rElbow: null,
+    lHand: null,
+    rHand: null,
     lLeg: null,
     rLeg: null,
+    lFoot: null,
+    rFoot: null,
     gun: null,
     muzzle: null,
     machete: null,
@@ -348,6 +352,8 @@ export function createPerson(palette, opts = {}) {
     hand.add(thumb);
 
     elbow.rotation.x = -0.45;
+    if (side > 0) rig.rHand = hand;
+    else rig.lHand = hand;
     return { shoulder, elbow };
   };
   const left = mkArm(-1);
@@ -446,6 +452,8 @@ export function createPerson(palette, opts = {}) {
     toe.position.set(0, footY - 0.02, female ? 0.18 : 0.22);
     pivot.add(toe);
 
+    if (side > 0) rig.rFoot = bootMesh;
+    else rig.lFoot = bootMesh;
     return pivot;
   };
   rig.lLeg = mkLeg(-1);

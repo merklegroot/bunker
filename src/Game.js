@@ -2313,6 +2313,7 @@ export class Game {
       let mx = 0;
       let mz = 0;
       let moveSpeed = 0;
+      let phaseWalls = false; // club / charge smash straight through buildings
       const downed = e.knockdownTimer > 0;
       const stunned = e.stunTimer > 0;
       const tearing = !!e.tearing;
@@ -2347,37 +2348,40 @@ export class Game {
         && e.aggroTarget !== 'tower'
         && this.playerAlive
       ) {
-        // Already provoked — swing the villager body at the player
+        // Club swing — straight at the player, phases through buildings
+        phaseWalls = true;
         const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
-        const steer = this._steer(e, px, pz);
+        const nx = (px - e.mesh.position.x) / dist;
+        const nz = (pz - e.mesh.position.z) / dist;
         const reach = e.r + PLAYER_RADIUS + LEADER_CLUB_REACH;
         const holdDist = reach - 0.35;
-        e.mesh.rotation.y = Math.atan2(steer.x || (px - e.mesh.position.x), steer.z || (pz - e.mesh.position.z));
-        if (dist > holdDist + 0.12) {
-          mx = steer.x;
-          mz = steer.z;
+        e.mesh.rotation.y = Math.atan2(nx, nz);
+        if (e.clubSwingT > 0 || dist > holdDist + 0.12) {
+          // Lunge through obstacles during the swing; otherwise close distance
+          mx = nx;
+          mz = nz;
         } else if (dist < holdDist - 0.15) {
-          mx = -(px - e.mesh.position.x) / dist;
-          mz = -(pz - e.mesh.position.z) / dist;
+          mx = -nx;
+          mz = -nz;
         } else {
           mx = 0;
           mz = 0;
         }
-        if (e.clubSwingT <= 0 && dist < reach + 0.2) {
+        if (e.clubSwingT <= 0 && dist < reach + 1.2) {
           e.clubSwingT = LEADER_CLUB_SWING;
           e.clubDidHit = false;
         }
       } else if (e.charging && this.playerAlive) {
-        // Leader machete charge — straight rush, heavy hit on contact
+        // Leader machete charge — straight rush through buildings, heavy hit on contact
+        phaseWalls = true;
         const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
-        const steer = this._steer(e, px, pz);
-        mx = steer.x || (px - e.mesh.position.x) / dist;
-        mz = steer.z || (pz - e.mesh.position.z) / dist;
+        mx = (px - e.mesh.position.x) / dist;
+        mz = (pz - e.mesh.position.z) / dist;
         e.mesh.rotation.y = Math.atan2(mx, mz);
         const punchReach = e.r + PLAYER_RADIUS + 0.55;
         if (dist < punchReach) {
-          const nx = (px - e.mesh.position.x) / dist;
-          const nz = (pz - e.mesh.position.z) / dist;
+          const nx = mx;
+          const nz = mz;
           this._hurt(e.damage + 1, nx, nz);
           this.kbx = nx * PLAYER_KNOCK_SPEED * 1.6;
           this.kbz = nz * PLAYER_KNOCK_SPEED * 1.6;
@@ -2585,8 +2589,8 @@ export class Game {
         }
       }
 
-      // Separation (skip while down)
-      if (!downed) {
+      // Separation (skip while down or phasing through buildings on a swing/charge)
+      if (!downed && !phaseWalls) {
         for (let j = 0; j < this.enemies.length; j++) {
           if (j === i) continue;
           const o = this.enemies[j];
@@ -2631,6 +2635,7 @@ export class Game {
         let spd = aggressive ? e.speed * 1.15 : hunting ? e.speed * 1.25 : e.speed;
         if (rampaging) spd *= 0.88; // linger while causing havoc
         if (e.charging) spd = e.speed * 2.35;
+        else if (clubbing && phaseWalls) spd = e.speed * 1.55;
         else if (e.speedBoostT > 0) spd *= 1.35;
         moveSpeed = spd * swimSlow;
         e.mesh.position.x += mx * moveSpeed * dt * control;
@@ -2651,12 +2656,14 @@ export class Game {
 
       this._pos.x = e.mesh.position.x;
       this._pos.z = e.mesh.position.z;
-      resolveCircle(this._pos, e.r, this.level.walls);
+      if (!phaseWalls) {
+        resolveCircle(this._pos, e.r, this.level.walls);
+      }
       e.mesh.position.x = clamp(this._pos.x, -this.level.HALF + 0.5, this.level.HALF - 0.5);
       e.mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
 
       // Stuck against a wall while trying to move — force repath + small side nudge
-      if (!downed && !stunned && moveSpeed > 0.5 && mLen > 0.05) {
+      if (!phaseWalls && !downed && !stunned && moveSpeed > 0.5 && mLen > 0.05) {
         const moved = Math.hypot(e.mesh.position.x - startX, e.mesh.position.z - startZ);
         if (moved < moveSpeed * dt * control * 0.15) {
           if (e._pathState) e._pathState.until = 0;
@@ -3292,44 +3299,151 @@ export class Game {
 
   _poseClubWeapon(e, s, swingU = 0) {
     if (!e || !s) return;
+    if (!this._clubGrip) this._clubGrip = new THREE.Vector3();
+    if (!this._clubFoot) this._clubFoot = new THREE.Vector3();
+
     const facing = e.mesh.rotation.y;
     const fx = Math.sin(facing);
     const fz = Math.cos(facing);
     const sx = Math.cos(facing);
     const sz = -Math.sin(facing);
-    // Wind-up behind shoulder, then arc forward through the strike
-    const wind = Math.sin(swingU * Math.PI);
-    const arc = (swingU - 0.5) * 2; // -1 → 1 across the swing
-    s.mesh.position.x = e.mesh.position.x + fx * (0.55 + wind * 0.85) + sx * (0.35 - arc * 0.9);
-    s.mesh.position.z = e.mesh.position.z + fz * (0.55 + wind * 0.85) + sz * (0.35 - arc * 0.9);
-    s.mesh.position.y = 1.15 + wind * 0.35;
-    s.mesh.rotation.y = facing + Math.PI * 0.5 + arc * 0.9;
-    s.mesh.rotation.x = Math.PI / 2 - 0.15;
-    s.mesh.rotation.z = arc * 0.7;
-
     const lrig = e.mesh.userData.rig;
-    if (lrig?.rArm && lrig?.lArm) {
-      lrig.rArm.rotation.x = -1.7 - wind * 0.5;
-      lrig.rArm.rotation.z = 0.55 + arc * 0.4;
-      lrig.lArm.rotation.x = -1.1;
-      lrig.lArm.rotation.z = -0.35;
-      if (lrig.rElbow) lrig.rElbow.rotation.x = -0.55;
-      if (lrig.lElbow) lrig.lElbow.rotation.x = -0.35;
+    const vrig = s.mesh.userData.rig;
+    const t = this.time;
+
+    // Hide victim shadow — they're being hauled, not standing
+    if (s.mesh.userData.shadow) s.mesh.userData.shadow.visible = false;
+
+    if (swingU <= 0.001) {
+      // Reach down beside him to haul by the right foot
+      if (lrig?.rArm && lrig?.lArm) {
+        lrig.rArm.rotation.x = 0.55;
+        lrig.rArm.rotation.y = 0.35;
+        lrig.rArm.rotation.z = 1.15;
+        lrig.lArm.rotation.x = 0.15;
+        lrig.lArm.rotation.y = 0;
+        lrig.lArm.rotation.z = -0.2;
+        if (lrig.rElbow) lrig.rElbow.rotation.x = -1.15;
+        if (lrig.lElbow) lrig.lElbow.rotation.x = -0.35;
+      }
+      if (lrig?.torso) {
+        lrig.torso.rotation.x = 0.28;
+        lrig.torso.rotation.y = 0.22;
+        lrig.torso.rotation.z = -0.08;
+      }
+
+      e.mesh.updateMatrixWorld(true);
+      const grip = this._clubGrip;
+      if (lrig?.rHand) {
+        lrig.rHand.getWorldPosition(grip);
+      } else {
+        // Fallback if hand rig missing
+        grip.set(
+          e.mesh.position.x - fx * 0.2 + sx * 0.7,
+          0.35,
+          e.mesh.position.z - fz * 0.2 + sz * 0.7,
+        );
+      }
+
+      // Body trails behind the grip; bounce as if scraping the sand
+      const bounce = Math.abs(Math.sin(t * 16)) * 0.12 + Math.abs(Math.sin(t * 27)) * 0.05;
+      const yawWobble = Math.sin(t * 9.5) * 0.22 + Math.sin(t * 14) * 0.1;
+      const pitchWobble = Math.sin(t * 12) * 0.16 + Math.cos(t * 19) * 0.08;
+      const rollWobble = Math.sin(t * 11) * 0.35 + Math.sin(t * 21) * 0.15;
+
+      s.mesh.rotation.order = 'YXZ';
+      s.mesh.rotation.y = facing + Math.PI + yawWobble;
+      s.mesh.rotation.x = Math.PI / 2 + 0.12 + pitchWobble;
+      s.mesh.rotation.z = rollWobble;
+
+      // Place roughly, then snap the right foot into the hand
+      s.mesh.position.set(grip.x - fx * 0.15, Math.max(0.12, grip.y - 0.05) + bounce * 0.15, grip.z - fz * 0.15);
+      s.mesh.updateMatrixWorld(true);
+      const foot = this._clubFoot;
+      if (vrig?.rFoot) vrig.rFoot.getWorldPosition(foot);
+      else if (vrig?.rLeg) vrig.rLeg.getWorldPosition(foot);
+      else foot.copy(s.mesh.position);
+
+      s.mesh.position.x += grip.x - foot.x;
+      s.mesh.position.y += grip.y - foot.y;
+      s.mesh.position.z += grip.z - foot.z;
+      // Keep torso/head from burying into the sand while the held foot stays up
+      s.mesh.position.y += bounce * 0.25;
+    } else {
+      // Haul up from the foot grip, then arc the body like a club
+      const lift = Math.min(1, swingU / 0.28);
+      const strike = Math.max(0, (swingU - 0.28) / 0.72);
+      const wind = Math.sin(strike * Math.PI);
+      const arc = (strike - 0.5) * 2;
+
+      if (lrig?.rArm && lrig?.lArm) {
+        lrig.rArm.rotation.x = 0.55 - lift * 2.3 - wind * 0.45;
+        lrig.rArm.rotation.y = 0.35 - lift * 0.35;
+        lrig.rArm.rotation.z = 1.15 - lift * 0.4 + arc * 0.35;
+        lrig.lArm.rotation.x = 0.15 - lift * 1.25;
+        lrig.lArm.rotation.z = -0.2 - lift * 0.1;
+        if (lrig.rElbow) lrig.rElbow.rotation.x = -1.15 + lift * 0.5;
+        if (lrig.lElbow) lrig.lElbow.rotation.x = -0.35;
+      }
+      if (lrig?.torso) {
+        lrig.torso.rotation.x = 0.28 - lift * 0.2;
+        lrig.torso.rotation.y = 0.22 - lift * 0.25;
+        lrig.torso.rotation.z = -0.08;
+      }
+
+      e.mesh.updateMatrixWorld(true);
+      const grip = this._clubGrip;
+      if (lrig?.rHand) lrig.rHand.getWorldPosition(grip);
+      else {
+        grip.set(
+          e.mesh.position.x + fx * (-0.2 + lift * 0.9 + wind * 0.7) + sx * (0.7 - arc * 0.8),
+          0.35 + lift * 1.2 + wind * 0.35,
+          e.mesh.position.z + fz * (-0.2 + lift * 0.9 + wind * 0.7) + sz * (0.7 - arc * 0.8),
+        );
+      }
+
+      s.mesh.rotation.order = 'YXZ';
+      s.mesh.rotation.y = facing + Math.PI * (1 - lift * 0.5) + arc * 0.85;
+      s.mesh.rotation.x = Math.PI / 2 - 0.25 * lift;
+      s.mesh.rotation.z = arc * 0.75;
+
+      s.mesh.position.copy(grip);
+      s.mesh.updateMatrixWorld(true);
+      const foot = this._clubFoot;
+      if (vrig?.rFoot) vrig.rFoot.getWorldPosition(foot);
+      else if (vrig?.rLeg) vrig.rLeg.getWorldPosition(foot);
+      else foot.copy(s.mesh.position);
+      s.mesh.position.x += grip.x - foot.x;
+      s.mesh.position.y += grip.y - foot.y;
+      s.mesh.position.z += grip.z - foot.z;
     }
 
-    const vrig = s.mesh.userData.rig;
-    if (vrig?.lArm && vrig?.rArm) {
-      const limp = 0.2 + Math.sin(this.time * 9) * 0.08;
+    // Limp / flail — free limbs flop; gripped right foot stays relatively stiff
+    if (vrig) {
+      const flail = Math.sin(t * 18) * 0.55;
+      const flail2 = Math.cos(t * 13) * 0.4;
       if (vrig.lArm) {
-        vrig.lArm.rotation.x = limp;
-        vrig.lArm.rotation.z = -0.4;
+        vrig.lArm.rotation.x = 0.6 + flail;
+        vrig.lArm.rotation.z = -0.7 + flail2 * 0.5;
       }
       if (vrig.rArm) {
-        vrig.rArm.rotation.x = limp;
-        vrig.rArm.rotation.z = 0.4;
+        vrig.rArm.rotation.x = 0.7 - flail * 0.8;
+        vrig.rArm.rotation.z = 0.65 + flail2;
       }
-      if (vrig.lLeg) vrig.lLeg.rotation.x = 0.3;
-      if (vrig.rLeg) vrig.rLeg.rotation.x = 0.35;
+      if (vrig.lLeg) {
+        vrig.lLeg.rotation.x = 0.35 + flail2 * 0.6;
+        vrig.lLeg.rotation.z = -0.25 + Math.sin(t * 15) * 0.2;
+      }
+      if (vrig.rLeg) {
+        // Held foot — slight tension, not a full flail
+        vrig.rLeg.rotation.x = -0.2 + Math.sin(t * 8) * 0.06;
+        vrig.rLeg.rotation.z = 0.05;
+      }
+      if (vrig.head) {
+        vrig.head.rotation.x = 0.65 + Math.sin(t * 10) * 0.2;
+        vrig.head.rotation.y = Math.sin(t * 7) * 0.35;
+        vrig.head.rotation.z = Math.sin(t * 12) * 0.4;
+      }
     }
   }
 
@@ -3370,8 +3484,15 @@ export class Game {
     e.clubHits = 0;
     e.clubSwingT = 0;
     e.clubDidHit = false;
+    const lrig = e.mesh?.userData?.rig;
+    if (lrig?.torso) {
+      lrig.torso.rotation.x = 0;
+      lrig.torso.rotation.y = 0;
+      lrig.torso.rotation.z = 0;
+    }
     if (!s) return;
     s.weaponBy = null;
+    if (s.mesh?.userData?.shadow) s.mesh.userData.shadow.visible = true;
     if (!this.spaniards.includes(s)) return;
 
     const fx = Math.sin(e.mesh.rotation.y);
