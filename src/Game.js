@@ -511,6 +511,7 @@ export class Game {
     this._toSpawn = 0;
     this._spawnCd = 0;
     this._waveClearDelay = 0;
+    this._waveClearCelebrating = false;
     this._civReinforceCd = 3;
 
     this._moveSpeed = 0;
@@ -583,6 +584,8 @@ export class Game {
       stamina: document.getElementById('stamina'),
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
+      waveBanner: document.getElementById('waveBanner'),
+      waveBannerNum: document.getElementById('waveBannerNum'),
       shop: document.getElementById('shop'),
       shopGold: document.getElementById('shopGold'),
       towerCost: document.getElementById('towerCost'),
@@ -938,8 +941,10 @@ export class Game {
     this._toSpawn = 0;
     this._spawnCd = 0;
     this._waveClearDelay = 0;
+    this._waveClearCelebrating = false;
     this._waveTimer = 0;
     this._fullHeal();
+    this._hideWaveWinBanner();
     this._setPrompt(this._prepPrompt());
     this._renderSimControls();
   }
@@ -970,6 +975,26 @@ export class Game {
     return `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>RMB</kbd> ${action}`;
   }
 
+  _showWaveWinBanner(wave) {
+    if (!this.el?.waveBanner) return;
+    if (this.el.waveBannerNum) this.el.waveBannerNum.textContent = String(wave);
+    this.el.waveBanner.classList.remove('hidden');
+    void this.el.waveBanner.offsetWidth;
+    this.el.waveBanner.classList.add('on');
+    this.sfx.waveClear(wave);
+    this.shake = Math.min(0.7, this.shake + 0.2);
+  }
+
+  _hideWaveWinBanner() {
+    if (!this.el?.waveBanner) return;
+    this.el.waveBanner.classList.remove('on');
+    const el = this.el.waveBanner;
+    clearTimeout(this._waveBannerHideT);
+    this._waveBannerHideT = setTimeout(() => {
+      if (!el.classList.contains('on')) el.classList.add('hidden');
+    }, 400);
+  }
+
   _beginWave(wave) {
     this.wave = wave;
     this._wavePhase = 'active';
@@ -982,10 +1007,12 @@ export class Game {
     this._toSpawn = Math.min(40, base + Math.floor(Math.random() * jitter));
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
+    this._waveClearCelebrating = false;
     this._waveTimer = 0;
     // Pack leader each wave (including wave 1 for testing)
     this._leaderPending = wave >= 1;
     this.sfx.waveStart(wave);
+    this._hideWaveWinBanner();
     this._setPrompt('');
     this._renderSimControls();
   }
@@ -1113,6 +1140,7 @@ export class Game {
     this.paused = false;
     this.playerAlive = false;
     this.player.visible = false;
+    this._hideWaveWinBanner();
     this._setPrompt('');
     this._setShopOpen(false);
     this.timeScale = 1;
@@ -1267,11 +1295,18 @@ export class Game {
       }
       if (this._toSpawn <= 0) this._waveSpawning = false;
     } else if (this.enemies.length === 0 && this.boats.length === 0) {
+      if (!this._waveClearCelebrating) {
+        this._waveClearCelebrating = true;
+        this._showWaveWinBanner(this.wave);
+      }
       this._waveClearDelay += dt;
       if (this._waveClearDelay > 2.5) {
         this.score += 40 + this.wave * 15;
         this._enterWavePrep(this.wave + 1);
       }
+    } else {
+      this._waveClearDelay = 0;
+      this._waveClearCelebrating = false;
     }
   }
 

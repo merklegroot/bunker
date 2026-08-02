@@ -198,6 +198,14 @@ export class Sfx {
     this._tone('sine', base * 1.5, 0.28, { gain: 0.08, delay: 0.2, attack: 0.02, decay: 0.1 });
   }
 
+  waveClear(wave = 1) {
+    const base = 260 + Math.min(8, wave) * 12;
+    this._tone('sine', base, 0.22, { gain: 0.11, freqEnd: base * 1.33, attack: 0.01, decay: 0.08 });
+    this._tone('triangle', base * 1.25, 0.28, { gain: 0.1, delay: 0.08, attack: 0.01, decay: 0.1 });
+    this._tone('sine', base * 1.5, 0.35, { gain: 0.09, delay: 0.18, attack: 0.02, decay: 0.12 });
+    this._tone('sine', base * 2, 0.45, { gain: 0.06, delay: 0.3, attack: 0.02, decay: 0.16 });
+  }
+
   boatLand() {
     this._noiseBurst({
       dur: 0.2,

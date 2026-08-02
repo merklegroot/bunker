@@ -194,6 +194,85 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #prompt.on { opacity: 1; }
 #prompt kbd { font: inherit; color: var(--ink); margin-right: 8px; }
 
+#waveBanner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 34%;
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+  transition: opacity .35s ease, transform .45s cubic-bezier(.2, .8, .2, 1);
+}
+#waveBanner.on {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+#waveBanner.hidden { display: none; }
+#waveBanner.on:not(.hidden) { display: block; }
+.waveBannerBar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 24px 28px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(8, 22, 32, 0.55) 12%,
+    rgba(8, 22, 32, 0.92) 35%,
+    rgba(8, 22, 32, 0.92) 65%,
+    rgba(8, 22, 32, 0.55) 88%,
+    transparent 100%
+  );
+  border-top: 1px solid rgba(232, 196, 106, 0.5);
+  border-bottom: 1px solid rgba(74, 160, 192, 0.4);
+  overflow: hidden;
+}
+.waveBannerBar::before,
+.waveBannerBar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, rgba(232, 196, 106, 0.85), transparent);
+}
+.waveBannerBar::before { left: max(8%, 40px); }
+.waveBannerBar::after { right: max(8%, 40px); }
+.waveBannerEyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .42em;
+  color: var(--sea);
+  text-indent: .42em;
+}
+.waveBannerTitle {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-size: clamp(36px, 7vw, 64px);
+  letter-spacing: .14em;
+  line-height: 1;
+  color: var(--ink);
+  text-shadow:
+    0 0 28px rgba(74, 160, 192, 0.45),
+    0 2px 0 rgba(0, 0, 0, 0.35);
+  animation: waveBannerPulse 1.8s ease-in-out infinite;
+}
+.waveBannerSub {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .28em;
+  color: var(--accent);
+  text-indent: .28em;
+}
+@keyframes waveBannerPulse {
+  0%, 100% { text-shadow: 0 0 22px rgba(74, 160, 192, 0.35), 0 2px 0 rgba(0,0,0,.35); }
+  50% { text-shadow: 0 0 42px rgba(232, 196, 106, 0.45), 0 2px 0 rgba(0,0,0,.35); }
+}
+
 #shop {
   position: static;
   width: 220px;
