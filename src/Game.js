@@ -17,6 +17,7 @@ import {
   wall,
   steerTo,
 } from './Level.js';
+import { KenneyAssets } from './KenneyAssets.js';
 
 const WALK_SPEED = 5.2;
 const RUN_SPEED = 8.2;
@@ -535,6 +536,123 @@ function createArrowTowerMesh({ ghost = false } = {}) {
   return g;
 }
 
+/**
+ * Landing craft / raft. Local −Z is the bow (toward the beach when yaw = 0).
+ * Prefers Kenney Watercraft Kit (CC0) when loaded; otherwise procedural mesh.
+ */
+function createBoatMesh({ raft = false, leader = false, assets = null } = {}) {
+  const kenney = assets?.cloneBoat?.({ raft, leader });
+  if (kenney) return kenney;
+
+  const g = new THREE.Group();
+  const wood = makeMat(raft ? 0x8a7050 : 0x5a4030);
+  const dark = makeMat(0x3a2818);
+  const light = makeMat(0x7a5a38);
+  const paint = makeMat(leader ? 0x8a3030 : 0x2a5a78);
+  const rope = makeMat(0xc4a878);
+  const foam = makeMat(0x0a2030, { transparent: true, opacity: 0.22, depthWrite: false });
+
+  // Soft water contact
+  const wake = new THREE.Mesh(new THREE.CircleGeometry(raft ? 1.2 : 1.4, 14), foam);
+  wake.rotation.x = -Math.PI / 2;
+  wake.position.y = 0.03;
+  wake.scale.set(0.75, 1.25, 1);
+  g.add(wake);
+
+  if (raft) {
+    // Lashed log raft — length along Z
+    for (let i = -2; i <= 2; i++) {
+      const log = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.14, 0.16, 2.6, 6),
+        i % 2 ? wood : light,
+      );
+      log.rotation.z = Math.PI / 2;
+      log.rotation.y = Math.PI / 2;
+      log.position.set(i * 0.28, 0.18, 0);
+      g.add(log);
+    }
+    for (const z of [-0.9, 0, 0.9]) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.08, 0.12), dark);
+      beam.position.set(0, 0.32, z);
+      g.add(beam);
+    }
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.06, 2.2), light);
+    deck.position.y = 0.38;
+    g.add(deck);
+    for (const z of [-1.0, 1.0]) {
+      const lash = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.03, 4, 10), rope);
+      lash.rotation.y = Math.PI / 2;
+      lash.position.set(0, 0.22, z);
+      lash.scale.set(1, 0.55, 1);
+      g.add(lash);
+    }
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.1, 5), dark);
+    mast.position.set(0, 0.95, 0.2);
+    g.add(mast);
+    const sail = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.03), makeMat(0xd8d0c0));
+    sail.position.set(0.05, 1.15, 0.2);
+    sail.rotation.y = 0.2;
+    g.add(sail);
+  } else {
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.38, 2.9), wood);
+    hull.position.y = 0.22;
+    g.add(hull);
+    const prow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.32, 0.7), dark);
+    prow.position.set(0, 0.28, -1.55);
+    prow.rotation.x = -0.15;
+    g.add(prow);
+    const prowTip = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.22, 0.4), dark);
+    prowTip.position.set(0, 0.34, -1.95);
+    prowTip.rotation.x = -0.25;
+    g.add(prowTip);
+    const stern = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.3, 0.35), dark);
+    stern.position.set(0, 0.3, 1.45);
+    g.add(stern);
+    for (const x of [-0.55, 0.55]) {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.28, 2.7), dark);
+      side.position.set(x, 0.48, 0);
+      g.add(side);
+    }
+    const bowRail = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.12, 0.1), light);
+    bowRail.position.set(0, 0.52, -1.4);
+    g.add(bowRail);
+    const sternRail = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.1), light);
+    sternRail.position.set(0, 0.52, 1.35);
+    g.add(sternRail);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.08, 2.6), paint);
+    stripe.position.y = 0.4;
+    g.add(stripe);
+    for (const z of [-0.7, 0.15, 0.9]) {
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.08, 0.28), light);
+      seat.position.set(0, 0.42, z);
+      g.add(seat);
+    }
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.04, 2.2), makeMat(0x4a3420));
+    floor.position.y = 0.3;
+    g.add(floor);
+    for (const x of [-0.72, 0.72]) {
+      const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 2.0, 5), dark);
+      oar.rotation.z = Math.PI / 2;
+      oar.rotation.y = Math.PI / 2;
+      oar.position.set(x, 0.55, 0.1);
+      g.add(oar);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.35), light);
+      blade.position.set(x, 0.55, -0.95);
+      g.add(blade);
+    }
+    const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.08), dark);
+    stem.position.set(0, 0.55, -1.7);
+    g.add(stem);
+    if (leader) {
+      const banner = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.4, 0.03), paint);
+      banner.position.set(0.15, 0.95, -1.55);
+      g.add(banner);
+    }
+  }
+
+  return g;
+}
+
 /** Keep-out disc shown around placed towers while carrying a tower to place. */
 function createTowerKeepoutRing(radius) {
   const g = new THREE.Group();
@@ -690,6 +808,10 @@ export class Game {
     this.nav = buildNavGrid(this.level);
 
     this._initThree();
+    this.assets = new KenneyAssets();
+    this.assets.load().catch((err) => {
+      console.warn('[Kenney] watercraft failed to load; using procedural boats', err);
+    });
     this._levelRoot = new THREE.Group();
     this.world.add(this._levelRoot);
     buildLevelMeshes(this._levelRoot, this.level);
@@ -1518,47 +1640,14 @@ export class Game {
   _spawnBoat(opts = {}) {
     const spot = randPick(this.level.boatSpawns);
     const isRaft = opts.leader ? false : Math.random() < 0.45;
-    const group = new THREE.Group();
+    const group = createBoatMesh({
+      raft: isRaft,
+      leader: !!opts.leader,
+      assets: this.assets,
+    });
     group.position.set(spot.x, 0, spot.z);
-
-    const hull = new THREE.Mesh(
-      new THREE.BoxGeometry(isRaft ? 2.4 : 3.2, 0.35, isRaft ? 1.4 : 1.1),
-      makeMat(isRaft ? COL.raft : COL.boat),
-    );
-    hull.position.y = 0.25;
-    group.add(hull);
-
-    // Soft water contact shadow
-    const wake = new THREE.Mesh(
-      new THREE.CircleGeometry(isRaft ? 1.1 : 1.35, 12),
-      makeMat(0x0a2030, { transparent: true, opacity: 0.22, depthWrite: false }),
-    );
-    wake.rotation.x = -Math.PI / 2;
-    wake.position.y = 0.04;
-    wake.scale.set(1.1, 0.7, 1);
-    group.add(wake);
-
-    if (!isRaft) {
-      const prow = new THREE.Mesh(
-        new THREE.BoxGeometry(0.6, 0.3, 0.9),
-        makeMat(0x4a3020),
-      );
-      prow.position.set(0, 0.35, -0.7);
-      group.add(prow);
-      const gunwale = new THREE.Mesh(
-        new THREE.BoxGeometry(3.0, 0.12, 1.0),
-        makeMat(0x3a2818),
-      );
-      gunwale.position.y = 0.45;
-      group.add(gunwale);
-    } else {
-      const plank = new THREE.Mesh(
-        new THREE.BoxGeometry(2.2, 0.08, 1.2),
-        makeMat(0x6a5030),
-      );
-      plank.position.y = 0.4;
-      group.add(plank);
-    }
+    // Local −Z is the bow; boats approach the beach by decreasing world Z
+    group.rotation.y = 0;
 
     const capacity = opts.leader
       ? 3 + Math.floor(Math.random() * 2)
@@ -1578,6 +1667,7 @@ export class Game {
       passengers,
       bob: Math.random() * Math.PI * 2,
       isRaft,
+      yaw: 0,
     });
   }
 
@@ -1586,22 +1676,40 @@ export class Game {
       const b = this.boats[i];
       b.bob += dt * 2.5;
       b.mesh.position.y = 0.05 + Math.sin(b.bob) * 0.08;
-      b.mesh.rotation.z = Math.sin(b.bob * 0.7) * 0.04;
+      // Gentle roll on the water (around forward axis = local Z)
+      b.mesh.rotation.z = Math.sin(b.bob * 0.7) * 0.05;
+      b.mesh.rotation.x = Math.sin(b.bob * 0.55) * 0.03;
 
       // Drift toward shore (decreasing z)
       if (b.mesh.position.z > b.targetZ) {
+        const prevX = b.mesh.position.x;
+        const prevZ = b.mesh.position.z;
         b.mesh.position.z -= b.speed * dt;
         // slight drift toward beach center / destination x
         const dx = this.level.destination.x - b.mesh.position.x;
         b.mesh.position.x += Math.sign(dx) * Math.min(Math.abs(dx), 1.2) * dt * 0.4;
+
+        const vx = b.mesh.position.x - prevX;
+        const vz = b.mesh.position.z - prevZ;
+        if (vx * vx + vz * vz > 1e-8) {
+          // Bow is local −Z → world (sin y, −cos y); align with velocity
+          const targetYaw = Math.atan2(vx, -vz);
+          let dy = targetYaw - (b.yaw ?? 0);
+          while (dy > Math.PI) dy -= Math.PI * 2;
+          while (dy < -Math.PI) dy += Math.PI * 2;
+          b.yaw = (b.yaw ?? 0) + dy * Math.min(1, dt * 4);
+          b.mesh.rotation.y = b.yaw;
+        }
       } else {
-        // Beach — unload
+        // Beach — unload ahead of the bow
         const n = b.passengers.length;
+        const bowX = Math.sin(b.mesh.rotation.y);
+        const bowZ = -Math.cos(b.mesh.rotation.y);
         for (let p = 0; p < n; p++) {
           const ox = (p - (n - 1) * 0.5) * 0.7;
           this._spawnEnemy(
-            b.mesh.position.x + ox,
-            b.mesh.position.z - 0.8,
+            b.mesh.position.x + ox * Math.cos(b.mesh.rotation.y) + bowX * 0.9,
+            b.mesh.position.z - ox * Math.sin(b.mesh.rotation.y) + bowZ * 0.9,
             b.passengers[p],
             { swimming: false },
           );
