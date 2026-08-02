@@ -54,6 +54,7 @@ const SPANIARD_FEAR_TIME = 5.5;
 const SPANIARD_GREET_RANGE = 7.5;
 const TEAR_PAIR_CIV_RANGE = 5.2;
 const TEAR_PAIR_ALLY_RANGE = 7.5;
+const PUNCH_HUNT_CIV_RANGE = 6.5;
 const TEAR_DURATION = 1.7;
 const HOLD_DURATION = 5.5;
 /** Swim pose: nearly prone so the water plane occludes torso/hips/legs. */
@@ -435,6 +436,10 @@ export class Game {
     this._pendingPunch = null;
     this.breached = 0;
     this.breachLimit = BREACH_LIMIT;
+    this.debugGatesClosed = false;
+    this._gateBarrierWall = null;
+    this._gateBarrierMesh = null;
+    this._dbgMenuOpen = false;
 
     this.enemies = [];
     this.spaniards = [];
@@ -537,6 +542,9 @@ export class Game {
       btnFast: document.getElementById('btnFast'),
       btnNextWave: document.getElementById('btnNextWave'),
       radar: document.getElementById('radar'),
+      dbgBtn: document.getElementById('dbgBtn'),
+      dbgMenu: document.getElementById('dbgMenu'),
+      dbgGatesBtn: document.getElementById('dbgGatesBtn'),
     };
     this._speechLayer = document.getElementById('speechLayer');
     this._radarCtx = this.el.radar?.getContext('2d') ?? null;
@@ -551,6 +559,15 @@ export class Game {
     if (this.el.btnFast) this.el.btnFast.addEventListener('click', () => this._setTimeScale(SIM_FAST_SCALE));
     if (this.el.btnNextWave) this.el.btnNextWave.addEventListener('click', () => this._requestNextWave());
     if (this.el.towerCost) this.el.towerCost.textContent = String(TOWER_SHOP_COST);
+    if (this.el.dbgBtn) {
+      this.el.dbgBtn.addEventListener('click', () => this._toggleDebugMenu());
+    }
+    if (this.el.dbgGatesBtn) {
+      this.el.dbgGatesBtn.addEventListener('click', () => {
+        this._setGatesClosed(!this.debugGatesClosed);
+        this.sfx.uiClick();
+      });
+    }
     this._renderHp();
     this._renderStamina();
     this._setShopOpen(false);
@@ -678,6 +695,72 @@ export class Game {
     this.player.position.set(this.level.playerSpawn.x, 0, this.level.playerSpawn.z);
     this.player.rotation.y = 0;
     setArmed(this.player, false);
+    this._syncGateBarrier();
+  }
+
+  _toggleDebugMenu() {
+    this._dbgMenuOpen = !this._dbgMenuOpen;
+    if (this.el.dbgMenu) this.el.dbgMenu.classList.toggle('hidden', !this._dbgMenuOpen);
+    if (this.el.dbgBtn) this.el.dbgBtn.setAttribute('aria-expanded', this._dbgMenuOpen ? 'true' : 'false');
+    this.sfx.uiClick();
+  }
+
+  _setGatesClosed(closed) {
+    this.debugGatesClosed = !!closed;
+    if (this.el.dbgGatesBtn) {
+      this.el.dbgGatesBtn.classList.toggle('on', this.debugGatesClosed);
+      this.el.dbgGatesBtn.setAttribute('aria-pressed', this.debugGatesClosed ? 'true' : 'false');
+      this.el.dbgGatesBtn.textContent = this.debugGatesClosed ? 'Gates: CLOSED' : 'Gates: OPEN';
+    }
+    this._syncGateBarrier();
+    if (this.running) {
+      this._setPrompt(this.debugGatesClosed
+        ? 'GATES CLOSED — invaders wander and use normal aggro'
+        : 'GATES OPEN — breach escape restored');
+    }
+  }
+
+  _disposeGateBarrier() {
+    if (this._gateBarrierWall && this.level?.walls) {
+      const i = this.level.walls.indexOf(this._gateBarrierWall);
+      if (i >= 0) this.level.walls.splice(i, 1);
+    }
+    this._gateBarrierWall = null;
+    if (this._gateBarrierMesh) {
+      this.world.remove(this._gateBarrierMesh);
+      this._gateBarrierMesh = null;
+    }
+  }
+
+  _syncGateBarrier() {
+    this._disposeGateBarrier();
+    if (!this.level) return;
+    if (!this.debugGatesClosed) {
+      this.nav = buildNavGrid(this.level);
+      return;
+    }
+
+    const z = this.level.breachZ;
+    const w = this.level.breachHalfW * 2;
+    this._gateBarrierWall = wall(0, z, w, 0.85, 3.4);
+    this._gateBarrierWall._gateBarrier = true;
+    this.level.walls.push(this._gateBarrierWall);
+
+    const group = new THREE.Group();
+    group.position.set(0, 0, z);
+    const mat = new THREE.MeshLambertMaterial({ color: 0x5a5048 });
+    const barMat = new THREE.MeshLambertMaterial({ color: 0x3a3830 });
+    for (const side of [-1, 1]) {
+      const door = new THREE.Mesh(new THREE.BoxGeometry(w * 0.48, 3.05, 0.38), mat);
+      door.position.set(side * (w * 0.25), 1.52, 0);
+      group.add(door);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(w * 0.42, 0.18, 0.2), barMat);
+      bar.position.set(side * (w * 0.25), 1.55, 0.22);
+      group.add(bar);
+    }
+    this.world.add(group);
+    this._gateBarrierMesh = group;
+    this.nav = buildNavGrid(this.level);
   }
 
   _enterWavePrep(wave) {
@@ -1818,6 +1901,7 @@ export class Game {
       civTarget: null,
       civHuntCd: 0.2 + Math.random() * 0.8,
       civHuntTimer: 0,
+      civHuntMode: null, // 'punch' | 'tear'
       speechCd: 1.5 + Math.random() * 3,
       speechLife: 0,
       tearing: null,
@@ -1958,10 +2042,9 @@ export class Game {
       e.speechLife = Math.max(0, e.speechLife - dt);
       if (e.speechLife <= 0 && e.bubble) e.bubble.classList.remove('on');
       if (e.civTarget && (e.civTarget.hp <= 0 || !this.spaniards.includes(e.civTarget))) {
-        e.civTarget = null;
-        e.civHuntTimer = 0;
+        this._clearCivHunt(e);
       }
-      if (e.civHuntTimer <= 0) e.civTarget = null;
+      if (e.civHuntTimer <= 0 && e.civTarget) this._clearCivHunt(e);
 
       const wasDown = e.knockdownTimer > 0;
       e.knockdownTimer = Math.max(0, e.knockdownTimer - dt);
@@ -2081,8 +2164,13 @@ export class Game {
 
           if (e.biteCd <= 0 && dist < punchReach) {
             e.biteCd = 0.55 + Math.random() * 0.25;
-            // Designated partner arrives while someone is holding → start tear
-            if (s.heldBy && s.heldBy !== e && !s.tearing) {
+            if (e.civHuntMode === 'punch') {
+              this._hurtSpaniard(s, e.damage, nx, nz);
+              this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
+              this.sfx.punchHit({ hard: e.damage >= 2 });
+              if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+            } else if (s.heldBy && s.heldBy !== e && !s.tearing) {
+              // Designated partner arrives while someone is holding → start tear
               this._beginTearSpaniard(s);
             } else if (
               !s.heldBy
@@ -2102,15 +2190,16 @@ export class Game {
             } else if (!s.heldBy && this._countHuntersOn(s) <= 2) {
               this._hurtSpaniard(s, e.damage, nx, nz);
               this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
+              this.sfx.punchHit({ hard: e.damage >= 2 });
               if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_CIV_LINES));
             }
           }
         }
       } else if (!tearing && !holding) {
-        // Push for the city gate — occasionally pair up for a pull-apart if ally is nearby
+        // March the gate, or (gates closed) idle-wander with normal civ/player aggro
         if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
           e.civHuntCd = 1.6 + Math.random() * 1.8;
-          this._maybeProposeTearPair(e);
+          this._maybeHuntCivilian(e);
         }
 
         if (!downed && !stunned && !e.swimming && e.speechCd <= 0) {
@@ -2118,10 +2207,35 @@ export class Game {
           else e.speechCd = 1.2 + Math.random() * 2;
         }
 
-        let tx = dest.x;
-        let tz = dest.z;
-        // Slight personal offset so they don't stack in a line
-        tx += Math.sin(i * 2.7) * 2.5;
+        let tx;
+        let tz;
+        if (this.debugGatesClosed) {
+          // Stay on whichever side of the gate they're on — never path through it
+          e.wanderCd = Math.max(0, (e.wanderCd ?? 0) - dt);
+          const nearWander = e.wanderTx != null
+            && Math.hypot(e.mesh.position.x - e.wanderTx, e.mesh.position.z - e.wanderTz) < 1.2;
+          if (e.wanderTx == null || e.wanderCd <= 0 || nearWander) {
+            const gateZ = this.level.breachZ;
+            const citySide = e.mesh.position.z < gateZ + 1.2;
+            let zMin;
+            let zMax;
+            if (citySide) {
+              zMin = gateZ - 14;
+              zMax = gateZ - 2.2;
+            } else {
+              zMin = gateZ + 2.5;
+              zMax = this.level.shoreLine + 1.5;
+            }
+            e.wanderTx = clamp(-16 + Math.random() * 32, -18, 18);
+            e.wanderTz = zMin + Math.random() * Math.max(0.5, zMax - zMin);
+            e.wanderCd = 2.5 + Math.random() * 3.5;
+          }
+          tx = e.wanderTx;
+          tz = e.wanderTz;
+        } else {
+          tx = dest.x + Math.sin(i * 2.7) * 2.5;
+          tz = dest.z;
+        }
         const steer = this._steer(e, tx, tz);
         mx = steer.x;
         mz = steer.z;
@@ -2248,9 +2362,10 @@ export class Game {
         updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
       }
 
-      // Breach check — reached city gate (downed can't breach)
+      // Breach check — reached city gate (downed can't breach; closed gates block escapes)
       if (
-        !downed
+        !this.debugGatesClosed
+        && !downed
         && e.mesh.position.z <= this.level.breachZ + 1.2
         && Math.abs(e.mesh.position.x - dest.x) < this.level.breachHalfW + 1.5
       ) {
@@ -2431,6 +2546,52 @@ export class Game {
     return n;
   }
 
+  _clearCivHunt(e) {
+    if (!e) return;
+    e.civTarget = null;
+    e.civHuntTimer = 0;
+    e.civHuntMode = null;
+  }
+
+  /** Opportunistic civilian attack: solo punch, or a two-person tear if an ally is nearby. */
+  _maybeHuntCivilian(e) {
+    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
+    // Prefer punches more often; tears need a partner and stay rarer
+    if (Math.random() < 0.62) {
+      this._maybeHuntPunch(e);
+      if (!e.civTarget) this._maybeProposeTearPair(e);
+    } else {
+      this._maybeProposeTearPair(e);
+      if (!e.civTarget) this._maybeHuntPunch(e);
+    }
+  }
+
+  /** Solo invader peels off to punch a nearby civilian. */
+  _maybeHuntPunch(e) {
+    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
+    if (Math.random() > 0.48) return;
+
+    let bestS = null;
+    let bestD = PUNCH_HUNT_CIV_RANGE;
+    for (const s of this.spaniards) {
+      if (s.hp <= 0 || s.tearing || s.heldBy) continue;
+      if (this._countHuntersOn(s) > 0) continue;
+      const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+      if (d < bestD) {
+        bestD = d;
+        bestS = s;
+      }
+    }
+    if (!bestS) return;
+
+    e.civTarget = bestS;
+    e.civHuntTimer = 3.8 + Math.random() * 2.2;
+    e.civHuntMode = 'punch';
+    if (Math.random() < 0.5) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+  }
+
   /** Nearby invader + free ally sometimes agree to pull a civilian apart (exactly two). */
   _maybeProposeTearPair(e) {
     if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
@@ -2473,8 +2634,10 @@ export class Game {
     const timer = 5.5 + Math.random() * 2.5;
     e.civTarget = bestS;
     e.civHuntTimer = timer;
+    e.civHuntMode = 'tear';
     partner.civTarget = bestS;
     partner.civHuntTimer = timer;
+    partner.civHuntMode = 'tear';
     if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
     if (Math.random() < 0.4) this._sayInvader(partner, randPick(INVADER_CIV_LINES));
   }
@@ -2517,10 +2680,7 @@ export class Game {
     if (partner) keepSet.add(partner);
     for (const e of this.enemies) {
       if (keepSet.has(e)) continue;
-      if (e.civTarget === s) {
-        e.civTarget = null;
-        e.civHuntTimer = 0;
-      }
+      if (e.civTarget === s) this._clearCivHunt(e);
     }
   }
 
@@ -2682,10 +2842,7 @@ export class Game {
     // Only the pair participates — drop anyone else queued on this civilian
     for (const e of this.enemies) {
       if (e === a || e === b) continue;
-      if (e.civTarget === s) {
-        e.civTarget = null;
-        e.civHuntTimer = 0;
-      }
+      if (e.civTarget === s) this._clearCivHunt(e);
     }
     a.kbx = 0;
     a.kbz = 0;
@@ -2807,20 +2964,15 @@ export class Game {
     if (T?.a) T.a.tearing = null;
     if (T?.b) T.b.tearing = null;
     if (T?.a) {
-      T.a.civTarget = null;
-      T.a.civHuntTimer = 0;
+      this._clearCivHunt(T.a);
       if (Math.random() < 0.6) this._sayInvader(T.a, randPick(INVADER_CIV_LINES));
     }
     if (T?.b) {
-      T.b.civTarget = null;
-      T.b.civHuntTimer = 0;
+      this._clearCivHunt(T.b);
       if (Math.random() < 0.6) this._sayInvader(T.b, randPick(INVADER_CIV_LINES));
     }
     for (const e of this.enemies) {
-      if (e.civTarget === s) {
-        e.civTarget = null;
-        e.civHuntTimer = 0;
-      }
+      if (e.civTarget === s) this._clearCivHunt(e);
     }
 
     s.tearing = null;
@@ -2977,10 +3129,7 @@ export class Game {
     if (s.bubble) s.bubble.remove();
     this.spaniards.splice(idx, 1);
     for (const e of this.enemies) {
-      if (e.civTarget === s) {
-        e.civTarget = null;
-        e.civHuntTimer = 0;
-      }
+      if (e.civTarget === s) this._clearCivHunt(e);
       if (e.tearing === s) e.tearing = null;
       if (e.holding === s) e.holding = null;
     }

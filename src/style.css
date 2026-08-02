@@ -385,6 +385,88 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 #hints kbd:first-child { margin-left: 0; }
 
+#dbgBtn {
+  position: absolute;
+  left: 0;
+  bottom: 36px;
+  appearance: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: rgba(200, 220, 230, 0.75);
+  background: rgba(8, 20, 28, 0.88);
+  border: none;
+  border-right: 1px solid rgba(232, 240, 244, 0.14);
+  border-top: 1px solid rgba(232, 240, 244, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+  z-index: 6;
+  transition: color .12s, background .12s;
+}
+#dbgBtn:hover,
+#dbgBtn[aria-expanded="true"] {
+  color: #f0d090;
+  background: rgba(12, 28, 36, 0.94);
+}
+#dbgMenu {
+  position: absolute;
+  left: 0;
+  bottom: 74px;
+  width: 220px;
+  padding: 10px 12px;
+  background: rgba(8, 20, 28, 0.92);
+  border-right: 1px solid rgba(232, 240, 244, 0.14);
+  border-top: 1px solid rgba(232, 240, 244, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+  z-index: 6;
+}
+#dbgMenu.hidden { display: none; }
+.dbgHead {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .22em;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+#dbgGatesBtn {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: rgba(220, 232, 238, 0.85);
+  background: rgba(232, 240, 244, 0.06);
+  border: 1px solid rgba(232, 240, 244, 0.18);
+  transition: background .12s, border-color .12s, color .12s;
+}
+#dbgGatesBtn:hover {
+  background: rgba(232, 240, 244, 0.12);
+  border-color: rgba(232, 196, 106, 0.45);
+  color: var(--ink);
+}
+#dbgGatesBtn.on {
+  background: rgba(232, 160, 64, 0.14);
+  border-color: rgba(232, 160, 64, 0.65);
+  color: var(--warn);
+}
+.dbgHint {
+  margin-top: 10px;
+  font-size: 10px;
+  letter-spacing: .06em;
+  line-height: 1.45;
+  color: rgba(200, 220, 230, 0.55);
+}
+
 #radarWrap {
   position: absolute;
   right: 0;
@@ -483,4 +565,6 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #score, #wave, #ammo, #gold, #breached, #enemies { font-size: 17px; }
   #radar { width: 110px; height: 110px; }
   #radarWrap { right: 0; bottom: 34px; padding: 6px; }
+  #dbgBtn { bottom: 34px; padding: 7px 10px; font-size: 10px; }
+  #dbgMenu { bottom: 68px; width: min(220px, calc(100vw - 24px)); }
 }
