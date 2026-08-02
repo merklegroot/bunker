@@ -8,6 +8,7 @@ import {
 import {
   buildLevelSpec,
   buildLevelMeshes,
+  updateLevelEnv,
   buildNavGrid,
   resolveCircle,
   hasLineOfSight,
@@ -447,7 +448,7 @@ function createFogMask(mapSize) {
       uOrigin: { value: new THREE.Vector2(0, 0) },
       uNear: { value: VIEW_NEAR },
       uFar: { value: VIEW_FAR },
-      uDark: { value: new THREE.Color(0x6a9aba) },
+      uDark: { value: new THREE.Color(0x8ab4c8) },
     },
     vertexShader: /* glsl */`
       varying vec2 vWorldXZ;
@@ -467,7 +468,7 @@ function createFogMask(mapSize) {
       void main() {
         float dist = length(vWorldXZ - uOrigin);
         float fog = smoothstep(uNear, uFar, dist);
-        float alpha = fog * 0.72;
+        float alpha = fog * 0.58;
         if (alpha < 0.01) discard;
         gl_FragColor = vec4(uDark, alpha);
       }
@@ -579,7 +580,7 @@ export class Game {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setClearColor(0x7ab0c8, 1);
+    this.renderer.setClearColor(0x8ec4d8, 1);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 160);
@@ -1255,6 +1256,8 @@ export class Game {
 
   /** Frozen sim: shop + tower place/pickup + next wave still work. */
   _updateSimPaused() {
+    this.time += 1 / 60;
+    updateLevelEnv(this._levelRoot, this.time);
     if (this.playerAlive) {
       this._tickPlaceDenyFlash(1 / 60);
       this._updateTowerInteract();
@@ -1270,6 +1273,7 @@ export class Game {
 
   _idleFx(dt) {
     this.time += dt;
+    updateLevelEnv(this._levelRoot, this.time);
     this._updateFx(dt);
     animatePerson(this.player, dt, 0, false);
     const focus = new THREE.Vector3(
@@ -1289,6 +1293,7 @@ export class Game {
   update(dt) {
     this.time += dt;
     this.shake = Math.max(0, this.shake - dt * 4);
+    updateLevelEnv(this._levelRoot, this.time);
 
     this._updateWaves(dt);
     if (this.playerAlive) {
