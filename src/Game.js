@@ -2868,11 +2868,11 @@ export class Game {
       const kx = killer.mesh.position.x;
       const kz = killer.mesh.position.z;
 
-      // Pin victim face-down in front of the killer
+      // Pin victim face-down; head toward killer (yaw flipped so pitch plants correctly)
       s.mesh.position.x = kx + fx * 0.9;
       s.mesh.position.z = kz + fz * 0.9;
       s.mesh.position.y = 0.32;
-      s.mesh.rotation.y = facing;
+      s.mesh.rotation.y = facing + Math.PI;
       s.mesh.rotation.x = Math.PI / 2;
       s.mesh.rotation.z = Math.sin(this.time * 14) * 0.04;
       s.kbx = 0;
