@@ -1391,6 +1391,16 @@ export class Game {
     hull.position.y = 0.25;
     group.add(hull);
 
+    // Soft water contact shadow
+    const wake = new THREE.Mesh(
+      new THREE.CircleGeometry(isRaft ? 1.1 : 1.35, 12),
+      makeMat(0x0a2030, { transparent: true, opacity: 0.22, depthWrite: false }),
+    );
+    wake.rotation.x = -Math.PI / 2;
+    wake.position.y = 0.04;
+    wake.scale.set(1.1, 0.7, 1);
+    group.add(wake);
+
     if (!isRaft) {
       const prow = new THREE.Mesh(
         new THREE.BoxGeometry(0.6, 0.3, 0.9),
@@ -1398,6 +1408,19 @@ export class Game {
       );
       prow.position.set(0, 0.35, -0.7);
       group.add(prow);
+      const gunwale = new THREE.Mesh(
+        new THREE.BoxGeometry(3.0, 0.12, 1.0),
+        makeMat(0x3a2818),
+      );
+      gunwale.position.y = 0.45;
+      group.add(gunwale);
+    } else {
+      const plank = new THREE.Mesh(
+        new THREE.BoxGeometry(2.2, 0.08, 1.2),
+        makeMat(0x6a5030),
+      );
+      plank.position.y = 0.4;
+      group.add(plank);
     }
 
     const capacity = opts.leader
