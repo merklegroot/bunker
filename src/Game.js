@@ -1006,10 +1006,15 @@ export class Game {
   }
 
   _prepPrompt() {
-    const action = this.towerStock > 0
-      ? 'PLACE TOWER <span class="dim">· keep 2 tower-widths apart</span>'
-      : (this.towers.length > 0 ? 'PICK UP TOWER' : 'BUY A TOWER');
-    return `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>RMB</kbd> ${action}`;
+    let action = '';
+    if (this.towerStock > 0) {
+      action = `<kbd>RMB</kbd> PLACE TOWER <span class="dim">· keep 2 tower-widths apart</span>`;
+    } else if (this.towers.length > 0) {
+      action = `<kbd>RMB</kbd> PICK UP TOWER`;
+    }
+    return action
+      ? `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; ${action}`
+      : `<kbd>R</kbd> START WAVE ${this.wave}`;
   }
 
   _showWaveWinBanner(wave) {
