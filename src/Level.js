@@ -29,10 +29,10 @@ export function buildLevelSpec(_wave = 1) {
   const props = [];
 
   // —— Ground planes (non-overlapping Z bands to avoid z-fighting) ——
-  // Deep sea  z: 36 → 14
-  floors.push({ x: 0, z: 25, w: MAP + 8, d: 22, color: 0x1a4a6a, y: -0.2 });
+  // Deep sea  z: 36 → 14 — surface near y=0 so submerged bodies are occluded
+  floors.push({ x: 0, z: 25, w: MAP + 8, d: 22, color: 0x1a4a6a, y: 0 });
   // Shallow / surf  z: 14 → 8
-  floors.push({ x: 0, z: 11, w: MAP + 4, d: 6, color: 0x3a8aaa, y: -0.12 });
+  floors.push({ x: 0, z: 11, w: MAP + 4, d: 6, color: 0x3a8aaa, y: 0.02 });
   // Wet sand  z: 8 → 2
   floors.push({ x: 0, z: 5, w: MAP + 2, d: 6, color: 0xc4b48a, y: -0.04 });
   // Dry sand  z: 2 → -14
@@ -489,7 +489,7 @@ export function buildLevelMeshes(root, spec) {
     }),
   );
   foam.rotation.x = -Math.PI / 2;
-  foam.position.set(0, 0.06, waterLine - 1);
+  foam.position.set(0, 0.08, waterLine - 1);
   foam.renderOrder = 2;
   root.add(foam);
 

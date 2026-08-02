@@ -51,6 +51,9 @@ const TEAR_PAIR_CIV_RANGE = 5.2;
 const TEAR_PAIR_ALLY_RANGE = 7.5;
 const TEAR_DURATION = 1.7;
 const HOLD_DURATION = 5.5;
+/** Swim pose: nearly prone so the water plane occludes torso/hips/legs. */
+const SWIM_PITCH = 1.42;
+const SWIM_Y = -0.34;
 const CIV_TARGET_COUNT = 9;
 const CIV_REINFORCE_MIN = 2.4;
 const CIV_REINFORCE_MAX = 5.0;
@@ -866,18 +869,20 @@ export class Game {
       this.player.position.z = this.level.waterLine + 4;
     }
 
-    const playerSwimming = this.player.position.z > this.level.waterLine;
-    if (playerSwimming) {
-      this.player.rotation.x = -1.05;
-      this.player.position.y = -0.42 + Math.sin(this.time * 3.6) * 0.05;
-    } else {
-      this.player.rotation.x = 0;
-      this.player.position.y = 0;
-    }
-
-    // Face the way we're moving
+    // Face the way we're moving (yaw before swim pitch — YXZ order)
     if (moving) {
       this.player.rotation.y = Math.atan2(axis.x, axis.y);
+    }
+
+    const playerSwimming = this.player.position.z > this.level.waterLine;
+    if (playerSwimming) {
+      this.player.rotation.x = SWIM_PITCH;
+      this.player.rotation.z = 0;
+      this.player.position.y = SWIM_Y + Math.sin(this.time * 3.6) * 0.03;
+    } else {
+      this.player.rotation.x = 0;
+      this.player.rotation.z = 0;
+      this.player.position.y = 0;
     }
 
     this._moveSpeed = moving ? speed : 0;
@@ -1117,8 +1122,8 @@ export class Game {
       if (e.hpBar) e.hpBar.visible = false;
     } else {
       e.mesh.rotation.x = 0;
-      e.mesh.position.y = e.swimming ? -0.42 : 0;
-      if (e.swimming) e.mesh.rotation.x = -1.05;
+      e.mesh.position.y = e.swimming ? SWIM_Y : 0;
+      if (e.swimming) e.mesh.rotation.x = SWIM_PITCH;
     }
   }
 
@@ -1138,8 +1143,8 @@ export class Game {
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
     if (kindKey === 'sturdy') mesh.scale.setScalar(1.15);
     if (opts.swimming) {
-      mesh.position.y = -0.42;
-      mesh.rotation.x = -1.05;
+      mesh.position.y = SWIM_Y;
+      mesh.rotation.x = SWIM_PITCH;
     }
 
     const hpBar = createHealthBar();
@@ -1289,11 +1294,12 @@ export class Game {
       if (e.hitFlash > 0) setTint(e.mesh, 0xffffff);
       else clearTint(e.mesh);
 
-      // Leave water once past shore — stand back up
-      if (e.swimming && e.mesh.position.z < this.level.shoreLine + 1 && e.knockdownTimer <= 0) {
+      // Hit the beach — stand and run (don't keep swimming across the sand)
+      if (e.swimming && e.mesh.position.z <= this.level.waterLine && e.knockdownTimer <= 0) {
         e.swimming = false;
         e.mesh.position.y = 0;
         e.mesh.rotation.x = 0;
+        e.mesh.rotation.z = 0;
         if (e.mesh.userData.rig?.torso) e.mesh.userData.rig.torso.rotation.x = 0;
       }
 
@@ -1510,9 +1516,13 @@ export class Game {
         e.mesh.rotation.x = Math.PI / 2;
         e.mesh.position.y = 0.4;
       } else if (e.swimming) {
-        // Prone crawl toward facing (+Z local) with a light bob
-        e.mesh.rotation.x = -1.05;
-        e.mesh.position.y = -0.42 + Math.sin(this.time * 3.6 + i) * 0.05;
+        // Nearly prone into facing dir (mesh uses YXZ: yaw then pitch)
+        e.mesh.rotation.x = SWIM_PITCH;
+        e.mesh.rotation.z = 0;
+        e.mesh.position.y = SWIM_Y + Math.sin(this.time * 3.6 + i) * 0.03;
+      } else {
+        e.mesh.rotation.x = 0;
+        e.mesh.rotation.z = 0;
       }
 
       if (!downed) {
