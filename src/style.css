@@ -52,11 +52,32 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-#hp { display: flex; gap: 5px; flex-wrap: wrap; max-width: 160px; }
-#hp i { width: 16px; height: 16px; background: var(--danger);
-  clip-path: polygon(50% 0, 100% 25%, 100% 70%, 50% 100%, 0 70%, 0 25%);
-  opacity: .95; box-shadow: 0 0 10px rgba(224,80,64,.35); }
-#hp i.empty { background: rgba(224,80,64,.22); box-shadow: none; }
+#hp { display: flex; gap: 4px; flex-wrap: wrap; max-width: 168px; align-items: center; }
+#hp i {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+#hp i svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 0 4px rgba(224, 80, 64, 0.45));
+}
+#hp i .heart-outline {
+  fill: rgba(224, 80, 64, 0.22);
+}
+#hp i .heart-fill {
+  fill: #e05040;
+}
+#hp i.empty svg { filter: none; }
+#hp i.empty .heart-outline { fill: rgba(224, 80, 64, 0.2); }
+#hp i.empty .heart-fill { fill: transparent; }
+#hp i.full .heart-outline { fill: #e05040; }
+#hp i.partial .heart-outline { fill: rgba(224, 80, 64, 0.22); }
 
 #stamina {
   width: 130px; height: 8px;

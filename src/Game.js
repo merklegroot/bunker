@@ -27,8 +27,8 @@ const STAMINA_REGEN_DELAY = 0.65;
 const STAMINA_EXHAUST_DELAY = 1.2;
 const PLAYER_RADIUS = 0.4;
 const MAX_HP = 6;
-const HP_REGEN_DELAY = 3.0;
-const HP_REGEN_RATE = 0.22; // hearts per second after delay
+const HP_REGEN_DELAY = 2.0;
+const HP_REGEN_RATE = 0.4; // hearts per second after delay
 const VIEW_NEAR = 10;
 const VIEW_FAR = 24;
 const BULLET_KNOCKBACK = 0.28;
@@ -686,8 +686,27 @@ export class Game {
     this._spawnCd = 0;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
+    this._fullHeal();
     this._setPrompt(this._prepPrompt());
     this._renderSimControls();
+  }
+
+  /** Restore player + placed towers at the end of a wave. */
+  _fullHeal() {
+    this.hp = this.maxHp;
+    this.regenAcc = 0;
+    this.regenDelay = 0;
+    this.stamina = MAX_STAMINA;
+    this.staminaRegenCd = 0;
+    clearTint(this.player);
+    for (const t of this.towers) {
+      t.hp = t.maxHp ?? TOWER_HP;
+      t.hitFlash = 0;
+      clearTint(t.mesh);
+    }
+    this._renderHp();
+    this._renderStamina();
+    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
   }
 
   _prepPrompt() {
@@ -1449,7 +1468,6 @@ export class Game {
     }
 
     this._regenPlayer(dt);
-    updateHealthBar(this.playerHpBar, this.hp, this.maxHp, this.player.rotation.y);
   }
 
   _regenPlayer(dt) {
@@ -1465,8 +1483,48 @@ export class Game {
       const healed = Math.floor(this.regenAcc);
       this.regenAcc -= healed;
       this.hp = Math.min(this.maxHp, this.hp + healed);
-      this._renderHp();
+      if (this.hp >= this.maxHp) this.regenAcc = 0;
     }
+    this._renderHp();
+    updateHealthBar(
+      this.playerHpBar,
+      Math.min(this.maxHp, this.hp + this.regenAcc),
+      this.maxHp,
+      this.player.rotation.y,
+    );
+  }
+
+  _heartSvg(fill, id) {
+    // fill 0..1 — classic heart path, fill rises from the bottom
+    const t = clamp(fill, 0, 1);
+    const y = ((1 - t) * 24).toFixed(2);
+    const h = (t * 24).toFixed(2);
+    const clip = `hp${id}`;
+    return (
+      `<svg viewBox="0 0 24 24" aria-hidden="true">`
+      + `<path class="heart-outline" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 `
+      + `2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 `
+      + `19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>`
+      + `<defs><clipPath id="${clip}"><rect x="0" y="${y}" width="24" height="${h}"/></clipPath></defs>`
+      + `<path class="heart-fill" clip-path="url(#${clip})" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 `
+      + `2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 `
+      + `19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>`
+      + `</svg>`
+    );
+  }
+
+  _renderHp() {
+    if (!this.el.hp) return;
+    const bits = [];
+    const partial = (this.hp < this.maxHp && this.regenDelay <= 0) ? this.regenAcc : 0;
+    for (let i = 0; i < this.maxHp; i++) {
+      let fill = 0;
+      if (i < this.hp) fill = 1;
+      else if (i === this.hp) fill = clamp(partial, 0, 1);
+      const cls = fill <= 0.001 ? 'empty' : (fill >= 0.999 ? 'full' : 'partial');
+      bits.push(`<i class="${cls}">${this._heartSvg(fill, i)}</i>`);
+    }
+    this.el.hp.innerHTML = bits.join('');
   }
 
   /**
@@ -3252,14 +3310,6 @@ export class Game {
         this.fx.splice(i, 1);
       }
     }
-  }
-
-  _renderHp() {
-    const bits = [];
-    for (let i = 0; i < this.maxHp; i++) {
-      bits.push(`<i class="${i < this.hp ? '' : 'empty'}"></i>`);
-    }
-    this.el.hp.innerHTML = bits.join('');
   }
 
   _renderStamina() {
