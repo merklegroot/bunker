@@ -72,8 +72,16 @@
     <button id="dbgBtn" type="button" title="Debug menu" aria-expanded="false">DBG</button>
     <div id="dbgMenu" class="hidden" aria-label="debug menu">
       <div class="dbgHead">DEBUG</div>
-      <button id="dbgGatesBtn" type="button" aria-pressed="false">Gates: OPEN</button>
+      <button id="dbgGatesBtn" type="button" class="dbgToggle" aria-pressed="false"></button>
+      <button id="dbgSpeechBtn" type="button" class="dbgToggle on" aria-pressed="true"></button>
       <p class="dbgHint">Closed gates block the breach. Invaders stop marching the gate and wander with normal player / tower / civilian aggro.</p>
+      <div class="dbgSection">CIV ATTACKS</div>
+      <div class="dbgToggles" role="group" aria-label="civilian attacks">
+        <button id="dbgAtkPunch" type="button" class="dbgToggle on" data-atk="punch" aria-pressed="true"></button>
+        <button id="dbgAtkBehead" type="button" class="dbgToggle on" data-atk="behead" aria-pressed="true"></button>
+        <button id="dbgAtkTear" type="button" class="dbgToggle on" data-atk="tear" aria-pressed="true"></button>
+      </div>
+      <p class="dbgHint">Turn attacks off to isolate one. A single enabled attack commits more often.</p>
     </div>
   </div>
 

@@ -416,7 +416,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   position: absolute;
   left: 0;
   bottom: 74px;
-  width: 220px;
+  width: 240px;
   padding: 10px 12px;
   background: rgba(8, 20, 28, 0.92);
   border-right: 1px solid rgba(232, 240, 244, 0.14);
@@ -434,33 +434,77 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   color: var(--ink);
   margin-bottom: 10px;
 }
-#dbgGatesBtn {
+.dbgSection {
+  margin: 12px 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  color: rgba(200, 220, 230, 0.65);
+}
+.dbgToggles {
+  display: grid;
+  gap: 4px;
+}
+.dbgToggle {
   appearance: none;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 8px;
   width: 100%;
   font: inherit;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .1em;
   text-align: left;
-  padding: 10px 12px;
+  padding: 9px 12px;
   cursor: pointer;
-  color: rgba(220, 232, 238, 0.85);
-  background: rgba(232, 240, 244, 0.06);
-  border: 1px solid rgba(232, 240, 244, 0.18);
+  color: rgba(220, 232, 238, 0.55);
+  background: rgba(232, 240, 244, 0.04);
+  border: 1px solid rgba(232, 240, 244, 0.12);
   transition: background .12s, border-color .12s, color .12s;
 }
-#dbgGatesBtn:hover {
-  background: rgba(232, 240, 244, 0.12);
-  border-color: rgba(232, 196, 106, 0.45);
+.dbgToggle:hover {
+  background: rgba(232, 240, 244, 0.1);
+  border-color: rgba(232, 196, 106, 0.4);
   color: var(--ink);
+}
+.dbgToggle .dbgName {
+  letter-spacing: .1em;
+}
+.dbgToggle .dbgNow {
+  font-size: 10px;
+  letter-spacing: .14em;
+  color: rgba(200, 220, 230, 0.55);
+}
+.dbgToggle .dbgNext {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  color: rgba(232, 196, 106, 0.75);
+  text-transform: lowercase;
+}
+.dbgToggle.on {
+  background: rgba(74, 160, 192, 0.14);
+  border-color: rgba(74, 160, 192, 0.55);
+  color: var(--sea);
+}
+.dbgToggle.on .dbgNow {
+  color: var(--sea);
+}
+.dbgToggle:not(.on) .dbgNow {
+  color: rgba(160, 180, 190, 0.55);
 }
 #dbgGatesBtn.on {
   background: rgba(232, 160, 64, 0.14);
   border-color: rgba(232, 160, 64, 0.65);
   color: var(--warn);
 }
+#dbgGatesBtn.on .dbgNow {
+  color: var(--warn);
+}
 .dbgHint {
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 10px;
   letter-spacing: .06em;
   line-height: 1.45;
@@ -566,5 +610,5 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #radar { width: 110px; height: 110px; }
   #radarWrap { right: 0; bottom: 34px; padding: 6px; }
   #dbgBtn { bottom: 34px; padding: 7px 10px; font-size: 10px; }
-  #dbgMenu { bottom: 68px; width: min(220px, calc(100vw - 24px)); }
+  #dbgMenu { bottom: 68px; width: min(240px, calc(100vw - 24px)); }
 }
