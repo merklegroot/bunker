@@ -33,6 +33,13 @@ const HP_REGEN_RATE = 0.4; // player hearts per second after delay
 const UNIT_REGEN_FRAC = 0.1;
 const VIEW_NEAR = 10;
 const VIEW_FAR = 24;
+const LEADER_POUND_RADIUS = 3.1;
+const LEADER_POUND_RISE = 0.32;
+const LEADER_POUND_HANG = 0.14;
+const LEADER_POUND_SLAM = 0.2;
+const LEADER_CLUB_MAX_HITS = 3;
+const LEADER_CLUB_REACH = 2.15;
+const LEADER_CLUB_SWING = 0.42;
 const CAM_VIEW_H = 13.5;
 /** Ortho frustum scale: lower = zoomed in. */
 const CAM_ZOOM_MIN = 0.72;
@@ -477,7 +484,8 @@ export class Game {
     this.breachLimit = BREACH_LIMIT;
     this.debugGatesClosed = false;
     this.debugSpeech = true;
-    this.debugAttacks = { punch: true, behead: true, tear: true };
+    this.debugAttacks = { punch: true, behead: true, tear: true, club: true };
+    this.debugLeader = { pound: true, charge: true };
     this._gateBarrierWall = null;
     this._gateBarrierMesh = null;
     this._dbgMenuOpen = false;
@@ -591,6 +599,9 @@ export class Game {
       dbgAtkPunch: document.getElementById('dbgAtkPunch'),
       dbgAtkBehead: document.getElementById('dbgAtkBehead'),
       dbgAtkTear: document.getElementById('dbgAtkTear'),
+      dbgAtkClub: document.getElementById('dbgAtkClub'),
+      dbgLeadPound: document.getElementById('dbgLeadPound'),
+      dbgLeadCharge: document.getElementById('dbgLeadCharge'),
     };
     this._speechLayer = document.getElementById('speechLayer');
     this._radarCtx = this.el.radar?.getContext('2d') ?? null;
@@ -624,10 +635,21 @@ export class Game {
       ['punch', this.el.dbgAtkPunch],
       ['behead', this.el.dbgAtkBehead],
       ['tear', this.el.dbgAtkTear],
+      ['club', this.el.dbgAtkClub],
     ]) {
       if (!el) continue;
       el.addEventListener('click', () => {
         this._setDebugAttack(key, !this.debugAttacks[key]);
+        this.sfx.uiClick();
+      });
+    }
+    for (const [key, el] of [
+      ['pound', this.el.dbgLeadPound],
+      ['charge', this.el.dbgLeadCharge],
+    ]) {
+      if (!el) continue;
+      el.addEventListener('click', () => {
+        this._setDebugLeader(key, !this.debugLeader[key]);
         this.sfx.uiClick();
       });
     }
@@ -795,6 +817,19 @@ export class Game {
     this._paintDebugToggle(this.el.dbgAtkPunch, 'Punch', this.debugAttacks.punch);
     this._paintDebugToggle(this.el.dbgAtkBehead, 'Behead', this.debugAttacks.behead);
     this._paintDebugToggle(this.el.dbgAtkTear, 'Tear apart', this.debugAttacks.tear);
+    this._paintDebugToggle(this.el.dbgAtkClub, 'Club body', this.debugAttacks.club);
+    this._paintDebugToggle(this.el.dbgLeadPound, 'Ground pound', this.debugLeader.pound);
+    this._paintDebugToggle(this.el.dbgLeadCharge, 'Machete charge', this.debugLeader.charge);
+  }
+
+  _leadEnabled(kind) {
+    return !!(this.debugLeader && this.debugLeader[kind]);
+  }
+
+  _setDebugLeader(kind, on) {
+    if (!this.debugLeader || !(kind in this.debugLeader)) return;
+    this.debugLeader[kind] = !!on;
+    this._renderDebugToggles();
   }
 
   _setDebugSpeech(on) {
@@ -831,9 +866,10 @@ export class Game {
     // Drop hunts that are no longer allowed
     if (!this.debugAttacks[kind] && this.enemies) {
       for (const e of this.enemies) {
-        if (e.civHuntMode === kind && !e.holding && !e.tearing && !e.beheading) {
+        if (e.civHuntMode === kind && !e.holding && !e.tearing && !e.beheading && !e.weaponCiv) {
           this._clearCivHunt(e);
         }
+        if (kind === 'club' && e.weaponCiv) this._discardClubWeapon(e, { fling: true });
       }
     }
   }
@@ -844,7 +880,7 @@ export class Game {
     this._syncGateBarrier();
     if (this.running) {
       this._setPrompt(this.debugGatesClosed
-        ? 'GATES CLOSED — invaders wander and use normal aggro'
+        ? 'GATES CLOSED — invaders wander; they only fight you if you hit them'
         : 'GATES OPEN — breach escape restored');
     }
   }
@@ -1192,6 +1228,7 @@ export class Game {
     this._updateSpaniards(dt);
     this._updateCivilianReinforcements(dt);
     this._updateHoldings(dt);
+    this._updateClubWeapons(dt);
     this._updateBeheadings(dt);
     this._updateTearings(dt);
     this._updateFx(dt);
@@ -2032,7 +2069,8 @@ export class Game {
       bald: isLeader,
     });
     setArmed(mesh, false);
-    if (isLeader) setMachete(mesh, true);
+    // Machete only comes out for executions / charge — default combat is fists
+    if (isLeader) setMachete(mesh, false);
     mesh.position.set(x, 0, z);
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
     if (kindKey === 'sturdy') mesh.scale.setScalar(1.15);
@@ -2082,18 +2120,27 @@ export class Game {
       civTarget: null,
       civHuntCd: 0.2 + Math.random() * 0.8,
       civHuntTimer: 0,
-      civHuntMode: null, // 'punch' | 'tear' | 'behead'
+      civHuntMode: null, // 'punch' | 'tear' | 'behead' | 'club'
       speechCd: 1.5 + Math.random() * 3,
       speechLife: 0,
       tearing: null,
       holding: null,
       beheading: null,
+      weaponCiv: null,
+      clubHits: 0,
+      clubSwingT: 0,
+      clubDidHit: false,
       regenDelay: 0,
-      // Leader: war-cry rally + machete charge
+      // Leader: war-cry rally, fists, ground pound, occasional machete charge
       rallyCd: isLeader ? 2.5 + Math.random() * 2 : 0,
-      chargeCd: isLeader ? 3 + Math.random() * 2 : 0,
+      chargeCd: isLeader ? 4 + Math.random() * 2 : 0,
       charging: false,
       chargeT: 0,
+      poundCd: isLeader ? 2.2 + Math.random() * 1.5 : 0,
+      pounding: false,
+      poundPhase: null,
+      poundT: 0,
+      clubGrabCd: isLeader ? 1.2 + Math.random() : 0,
       speedBoostT: 0,
     });
     if (isLeader) {
@@ -2269,19 +2316,54 @@ export class Game {
       const tearing = !!e.tearing;
       const holding = !!e.holding;
       const beheading = !!e.beheading;
+      const clubbing = !!e.weaponCiv;
+      const pounding = !!e.pounding;
       const towerTarget = e.aggroTarget === 'tower'
         ? this._nearestPlacedTower(e.mesh.position.x, e.mesh.position.z)
         : null;
-      const aggressive = !downed && !stunned && !tearing && !holding && !beheading && e.aggroTimer > 0
+      const aggressive = !downed && !stunned && !tearing && !holding && !beheading && !pounding
+        && e.aggroTimer > 0
         && (e.aggroTarget === 'tower' ? !!towerTarget : this.playerAlive);
 
-      if (downed || stunned || tearing || holding || beheading) {
-        // No AI — knockback only (hold/tear/behead posing happens in dedicated updates)
+      if (downed || stunned || tearing || holding || beheading || pounding) {
+        // No AI — knockback only (hold/tear/behead/pound posing happens in dedicated updates)
         mx = 0;
         mz = 0;
         if (e.charging) {
           e.charging = false;
           e.chargeT = 0;
+        }
+        if ((downed || stunned) && e.pounding) {
+          e.pounding = false;
+          e.poundPhase = null;
+          e.poundT = 0;
+          if (!e.swimming) e.mesh.position.y = 0;
+        }
+      } else if (
+        clubbing
+        && e.aggroTimer > 0
+        && e.aggroTarget !== 'tower'
+        && this.playerAlive
+      ) {
+        // Already provoked — swing the villager body at the player
+        const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
+        const steer = this._steer(e, px, pz);
+        const reach = e.r + PLAYER_RADIUS + LEADER_CLUB_REACH;
+        const holdDist = reach - 0.35;
+        e.mesh.rotation.y = Math.atan2(steer.x || (px - e.mesh.position.x), steer.z || (pz - e.mesh.position.z));
+        if (dist > holdDist + 0.12) {
+          mx = steer.x;
+          mz = steer.z;
+        } else if (dist < holdDist - 0.15) {
+          mx = -(px - e.mesh.position.x) / dist;
+          mz = -(pz - e.mesh.position.z) / dist;
+        } else {
+          mx = 0;
+          mz = 0;
+        }
+        if (e.clubSwingT <= 0 && dist < reach + 0.2) {
+          e.clubSwingT = LEADER_CLUB_SWING;
+          e.clubDidHit = false;
         }
       } else if (e.charging && this.playerAlive) {
         // Leader machete charge — straight rush, heavy hit on contact
@@ -2303,6 +2385,7 @@ export class Game {
           e.charging = false;
           e.chargeT = 0;
           e.biteCd = 0.9;
+          setMachete(e.mesh, false);
         }
       } else if (aggressive && e.aggroTarget === 'tower' && towerTarget) {
         const tx = towerTarget.mesh.position.x;
@@ -2359,7 +2442,7 @@ export class Game {
             this._sayInvader(e, randPick(e.kind === 'leader' ? LEADER_LINES : INVADER_FIGHT_LINES));
           }
         }
-      } else if (!downed && !stunned && !tearing && !holding && !beheading && e.civTarget) {
+      } else if (!downed && !stunned && !tearing && !holding && !beheading && !clubbing && !pounding && e.civTarget) {
         // Divert to punch / grab / behead a Spaniard
         const s = e.civTarget;
         if (s.tearing || s.heldBy === e || s.beheading) {
@@ -2391,6 +2474,8 @@ export class Game {
             e.biteCd = 0.55 + Math.random() * 0.25;
             if (e.civHuntMode === 'behead' && this._atkEnabled('behead')) {
               this._beginBehead(e, s);
+            } else if (e.civHuntMode === 'club' && this._atkEnabled('club')) {
+              this._beginClubWeapon(e, s);
             } else if (e.civHuntMode === 'punch' && this._atkEnabled('punch')) {
               this._hurtSpaniard(s, e.damage, nx, nz);
               this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
@@ -2431,9 +2516,9 @@ export class Game {
             }
           }
         }
-      } else if (!tearing && !holding && !beheading) {
-        // March the gate, or (gates closed) idle-wander with normal civ/player aggro
-        if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
+      } else if (!tearing && !holding && !beheading && !pounding) {
+        // March the gate (or wander). Clubbing invaders keep the body and keep moving.
+        if (!downed && !stunned && !clubbing && e.civHuntCd <= 0 && this.spaniards.length > 0) {
           e.civHuntCd = 1.6 + Math.random() * 1.8;
           this._maybeHuntCivilian(e);
         }
@@ -2477,8 +2562,8 @@ export class Game {
         mz = steer.z;
         if (mx || mz) e.mesh.rotation.y = Math.atan2(mx, mz);
 
-        // Soft avoid player when close but not aggressive (sidestep)
-        if (this.playerAlive) {
+        // Soft avoid player when close but not aggressive (sidestep — never open fire first)
+        if (this.playerAlive && e.aggroTimer <= 0) {
           const pdx = e.mesh.position.x - px;
           const pdz = e.mesh.position.z - pz;
           const pd = Math.hypot(pdx, pdz);
@@ -2505,7 +2590,7 @@ export class Game {
           }
         }
         for (const s of this.spaniards) {
-          if (s.hp <= 0 || e.civTarget === s) continue;
+          if (s.hp <= 0 || e.civTarget === s || e.weaponCiv === s) continue;
           const sx = e.mesh.position.x - s.mesh.position.x;
           const sz = e.mesh.position.z - s.mesh.position.z;
           const sd = Math.hypot(sx, sz);
@@ -2593,7 +2678,7 @@ export class Game {
           stunned ? 0 : moveSpeed,
           aggressive && moveSpeed > 3.5,
           (e.panicked && aggressive) || stunned,
-          tearing || holding || beheading,
+          tearing || holding || beheading || clubbing || pounding,
           e.swimming,
         );
         updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
@@ -2710,6 +2795,7 @@ export class Game {
       heldBy: null,
       holdTimer: 0,
       beheading: null,
+      weaponBy: null,
       regenDelay: 0,
     };
     this.spaniards.push(s);
@@ -2803,15 +2889,21 @@ export class Game {
     e.civHuntMode = null;
   }
 
-  /** Opportunistic civilian attack: punch, behead, or a two-person tear. */
+  /** Opportunistic civilian attack: punch, behead, club, or a two-person tear. */
   _maybeHuntCivilian(e) {
-    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
-    if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.weaponCiv || e.aggroTimer > 0) return;
+    if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.pounding) return;
 
-    // Pack leader almost always tries an execution first
-    if (e.kind === 'leader' && this._atkEnabled('behead')) {
-      this._maybeHuntBehead(e);
-      if (e.civTarget) return;
+    // Pack leader: grab a body to swing, else try an execution
+    if (e.kind === 'leader') {
+      if (this._atkEnabled('club')) {
+        this._maybeHuntClub(e);
+        if (e.civTarget) return;
+      }
+      if (this._atkEnabled('behead')) {
+        this._maybeHuntBehead(e);
+        if (e.civTarget) return;
+      }
     }
 
     const tries = [];
@@ -2834,14 +2926,22 @@ export class Game {
     if (!e || e.kind !== 'leader') return;
     e.rallyCd = Math.max(0, (e.rallyCd || 0) - dt);
     e.chargeCd = Math.max(0, (e.chargeCd || 0) - dt);
+    e.poundCd = Math.max(0, (e.poundCd || 0) - dt);
+
     if (e.charging) {
       e.chargeT = Math.max(0, (e.chargeT || 0) - dt);
-      if (e.chargeT <= 0) e.charging = false;
+      if (e.chargeT <= 0) {
+        e.charging = false;
+        if (!e.beheading) setMachete(e.mesh, false);
+      } else {
+        setMachete(e.mesh, true);
+      }
     }
 
-    // Keep the machete drawn when not mid-execution
-    if (!e.beheading && !e.tearing && !e.holding) {
-      setMachete(e.mesh, true);
+    // Ground pound wind-up / slam
+    if (e.pounding) {
+      this._tickLeaderPound(e, dt);
+      return;
     }
 
     if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing || e.holding || e.beheading) {
@@ -2850,27 +2950,155 @@ export class Game {
     }
 
     // War cry — whip nearby invaders into a frenzy
-    if (e.rallyCd <= 0) {
+    if (e.rallyCd <= 0 && !e.weaponCiv) {
       e.rallyCd = 7.5 + Math.random() * 3.5;
       this._leaderRally(e);
     }
 
-    // Machete charge at the player when already fighting
+    const fighting = e.aggroTimer > 0 && e.aggroTarget !== 'tower' && this.playerAlive;
+    if (!fighting || e.charging || e.weaponCiv) return;
+
+    const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z);
+
+    // Ground pound when close — preferred special over charge
     if (
-      !e.charging
-      && e.chargeCd <= 0
-      && e.aggroTimer > 0
-      && e.aggroTarget !== 'tower'
-      && this.playerAlive
+      this._leadEnabled('pound')
+      && e.poundCd <= 0
+      && dist < LEADER_POUND_RADIUS + 0.85
+      && dist > 0.6
     ) {
-      const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z);
-      if (dist > 3.2 && dist < 10.5) {
-        e.charging = true;
-        e.chargeT = 0.9;
-        e.chargeCd = 5.5 + Math.random() * 2;
-        this._sayInvader(e, randPick(LEADER_LINES));
-        this.sfx.macheteDraw();
+      this._beginLeaderPound(e);
+      return;
+    }
+
+    // Snatch a nearby civilian mid-fight to use as a club
+    e.clubGrabCd = Math.max(0, (e.clubGrabCd || 0) - dt);
+    if (this._atkEnabled('club') && e.clubGrabCd <= 0) {
+      e.clubGrabCd = 2.8 + Math.random() * 1.5;
+      let bestS = null;
+      let bestD = 2.6;
+      for (const s of this.spaniards) {
+        if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
+        const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+        if (d < bestD) {
+          bestD = d;
+          bestS = s;
+        }
       }
+      if (bestS) {
+        this._beginClubWeapon(e, bestS);
+        return;
+      }
+    }
+
+    // Occasional machete charge from mid range (not the default attack)
+    if (
+      this._leadEnabled('charge')
+      && e.chargeCd <= 0
+      && dist > 4.2
+      && dist < 9.5
+      && Math.random() < 0.35
+    ) {
+      e.charging = true;
+      e.chargeT = 0.85;
+      e.chargeCd = 7.5 + Math.random() * 3;
+      setMachete(e.mesh, true);
+      this._sayInvader(e, randPick(LEADER_LINES));
+      this.sfx.macheteDraw();
+    }
+  }
+
+  _beginLeaderPound(e) {
+    if (!e || e.pounding) return;
+    e.pounding = true;
+    e.poundPhase = 'rise';
+    e.poundT = 0;
+    e.poundCd = 6.5 + Math.random() * 2.5;
+    e.charging = false;
+    e.chargeT = 0;
+    e.kbx = 0;
+    e.kbz = 0;
+    setMachete(e.mesh, false);
+    this._sayInvader(e, randPick(LEADER_LINES));
+  }
+
+  _tickLeaderPound(e, dt) {
+    e.poundT += dt;
+    const rig = e.mesh.userData.rig;
+    if (e.poundPhase === 'rise') {
+      const u = Math.min(1, e.poundT / LEADER_POUND_RISE);
+      e.mesh.position.y = u * 1.4;
+      if (rig?.lArm && rig?.rArm) {
+        rig.lArm.rotation.x = -2.2 * u;
+        rig.rArm.rotation.x = -2.2 * u;
+        rig.lArm.rotation.z = -0.35;
+        rig.rArm.rotation.z = 0.35;
+      }
+      if (rig?.torso) rig.torso.rotation.x = -0.25 * u;
+      if (u >= 1) {
+        e.poundPhase = 'hang';
+        e.poundT = 0;
+      }
+    } else if (e.poundPhase === 'hang') {
+      e.mesh.position.y = 1.4;
+      if (e.poundT >= LEADER_POUND_HANG) {
+        e.poundPhase = 'slam';
+        e.poundT = 0;
+      }
+    } else if (e.poundPhase === 'slam') {
+      const u = Math.min(1, e.poundT / LEADER_POUND_SLAM);
+      e.mesh.position.y = 1.4 * (1 - u);
+      if (rig?.lArm && rig?.rArm) {
+        rig.lArm.rotation.x = -2.2 + u * 1.4;
+        rig.rArm.rotation.x = -2.2 + u * 1.4;
+      }
+      if (rig?.torso) rig.torso.rotation.x = -0.25 + u * 0.55;
+      if (u >= 1) {
+        e.mesh.position.y = 0;
+        if (rig?.torso) rig.torso.rotation.x = 0;
+        this._leaderPoundImpact(e);
+        e.pounding = false;
+        e.poundPhase = null;
+        e.poundT = 0;
+      }
+    }
+  }
+
+  _leaderPoundImpact(e) {
+    const x = e.mesh.position.x;
+    const z = e.mesh.position.z;
+    this.shake = Math.min(1.2, this.shake + 0.55);
+    this._spark(x, z, 0xc4a060, 16, 0.55, 1.2);
+    this._spark(x, z, COL.blood, 6, 0.3, 1.0);
+    this.sfx.knockdown();
+    this.sfx.punchHit({ hard: true });
+
+    if (this.playerAlive) {
+      const dist = Math.hypot(this.player.position.x - x, this.player.position.z - z);
+      if (dist < LEADER_POUND_RADIUS + PLAYER_RADIUS) {
+        const falloff = 1 - dist / (LEADER_POUND_RADIUS + PLAYER_RADIUS);
+        const nx = (this.player.position.x - x) / (dist || 1);
+        const nz = (this.player.position.z - z) / (dist || 1);
+        this._hurt(Math.max(1, Math.round(e.damage + 1 + falloff)), nx, nz);
+        this.kbx = nx * PLAYER_KNOCK_SPEED * (1.3 + falloff);
+        this.kbz = nz * PLAYER_KNOCK_SPEED * (1.3 + falloff);
+      }
+    }
+
+    for (const s of this.spaniards) {
+      if (s.hp <= 0 || s.weaponBy || s.tearing || s.beheading) continue;
+      const d = Math.hypot(s.mesh.position.x - x, s.mesh.position.z - z);
+      if (d >= LEADER_POUND_RADIUS + 0.4) continue;
+      const nx = (s.mesh.position.x - x) / (d || 1);
+      const nz = (s.mesh.position.z - z) / (d || 1);
+      this._hurtSpaniard(s, Math.max(2, e.damage), nx, nz);
+      this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
+    }
+
+    for (const t of this.towers) {
+      if (!t || t.hp <= 0) continue;
+      const d = Math.hypot(t.mesh.position.x - x, t.mesh.position.z - z);
+      if (d < LEADER_POUND_RADIUS + 0.8) this._hurtTower(t, e.damage + 1);
     }
   }
 
@@ -2886,23 +3114,285 @@ export class Game {
         o.mesh.position.z - leader.mesh.position.z,
       );
       if (d > 10) continue;
-      this._enrage(o, AGGRO_DURATION * 1.15, o.aggroTarget === 'tower' ? 'tower' : 'player');
+      // Rally buffs speed; only re-aggro units already fighting (never provoke fresh player chases)
+      if (o.aggroTimer > 0) {
+        this._enrage(o, AGGRO_DURATION * 1.15, o.aggroTarget === 'tower' ? 'tower' : 'player');
+      }
       o.speedBoostT = Math.max(o.speedBoostT || 0, 3.8);
-      o.panicked = true;
+      if (o.aggroTimer > 0) o.panicked = true;
+    }
+  }
+
+  /** Leader peels off to grab a civilian and use them as a club. */
+  _maybeHuntClub(e) {
+    if (!this._atkEnabled('club')) return;
+    if (!e || e.kind !== 'leader' || e.civTarget || e.weaponCiv || e.holding || e.tearing || e.beheading) return;
+    if (e.aggroTimer > 0 || e.knockdownTimer > 0 || e.stunTimer > 0 || e.pounding) return;
+    if (!this._atkSolo('club') && Math.random() > 0.62) return;
+
+    let bestS = null;
+    let bestD = PUNCH_HUNT_CIV_RANGE + 1.5 + (this._atkSolo('club') ? 5 : 0);
+    for (const s of this.spaniards) {
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
+      if (this._countHuntersOn(s) > 0) continue;
+      const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+      if (d < bestD) {
+        bestD = d;
+        bestS = s;
+      }
+    }
+    if (!bestS) return;
+
+    e.civTarget = bestS;
+    e.civHuntTimer = 4.5 + Math.random() * 2;
+    e.civHuntMode = 'club';
+    if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+  }
+
+  _beginClubWeapon(e, s) {
+    if (!this._atkEnabled('club')) return;
+    if (!e || !s || e.weaponCiv || s.weaponBy || s.tearing || s.beheading) return;
+    if (s.heldBy) this._releaseHold(s);
+    if (s.beheading) this._cancelBehead(s);
+
+    for (const o of this.enemies) {
+      if (o !== e && o.civTarget === s) this._clearCivHunt(o);
+    }
+
+    e.weaponCiv = s;
+    e.clubHits = LEADER_CLUB_MAX_HITS;
+    e.clubSwingT = 0;
+    e.clubDidHit = false;
+    e.civTarget = null;
+    e.civHuntMode = null;
+    e.civHuntTimer = 0;
+    e.holding = null;
+    e.kbx = 0;
+    e.kbz = 0;
+    setMachete(e.mesh, false);
+
+    s.weaponBy = e;
+    s.heldBy = null;
+    s.kbx = 0;
+    s.kbz = 0;
+    s.fearTimer = 99;
+    if (s.hpBar) s.hpBar.visible = false;
+
+    this._sayInvader(e, randPick(LEADER_LINES));
+    this._saySpaniard(s, randPick(FEAR_LINES), true);
+    this.sfx.punchHit({ hard: true });
+  }
+
+  _poseClubWeapon(e, s, swingU = 0) {
+    if (!e || !s) return;
+    const facing = e.mesh.rotation.y;
+    const fx = Math.sin(facing);
+    const fz = Math.cos(facing);
+    const sx = Math.cos(facing);
+    const sz = -Math.sin(facing);
+    // Wind-up behind shoulder, then arc forward through the strike
+    const wind = Math.sin(swingU * Math.PI);
+    const arc = (swingU - 0.5) * 2; // -1 → 1 across the swing
+    s.mesh.position.x = e.mesh.position.x + fx * (0.55 + wind * 0.85) + sx * (0.35 - arc * 0.9);
+    s.mesh.position.z = e.mesh.position.z + fz * (0.55 + wind * 0.85) + sz * (0.35 - arc * 0.9);
+    s.mesh.position.y = 1.15 + wind * 0.35;
+    s.mesh.rotation.y = facing + Math.PI * 0.5 + arc * 0.9;
+    s.mesh.rotation.x = Math.PI / 2 - 0.15;
+    s.mesh.rotation.z = arc * 0.7;
+
+    const lrig = e.mesh.userData.rig;
+    if (lrig?.rArm && lrig?.lArm) {
+      lrig.rArm.rotation.x = -1.7 - wind * 0.5;
+      lrig.rArm.rotation.z = 0.55 + arc * 0.4;
+      lrig.lArm.rotation.x = -1.1;
+      lrig.lArm.rotation.z = -0.35;
+      if (lrig.rElbow) lrig.rElbow.rotation.x = -0.55;
+      if (lrig.lElbow) lrig.lElbow.rotation.x = -0.35;
+    }
+
+    const vrig = s.mesh.userData.rig;
+    if (vrig?.lArm && vrig?.rArm) {
+      const limp = 0.2 + Math.sin(this.time * 9) * 0.08;
+      if (vrig.lArm) {
+        vrig.lArm.rotation.x = limp;
+        vrig.lArm.rotation.z = -0.4;
+      }
+      if (vrig.rArm) {
+        vrig.rArm.rotation.x = limp;
+        vrig.rArm.rotation.z = 0.4;
+      }
+      if (vrig.lLeg) vrig.lLeg.rotation.x = 0.3;
+      if (vrig.rLeg) vrig.rLeg.rotation.x = 0.35;
+    }
+  }
+
+  _clubDetachLimb(s, dirX, dirZ) {
+    if (!s?.mesh?.userData?.rig) return false;
+    const rig = s.mesh.userData.rig;
+    const order = ['lArm', 'rArm', 'lLeg', 'rLeg', 'head'];
+    const next = order.find((n) => rig[n]);
+    if (!next) return false;
+    const parts = detachBodyParts(s.mesh, [next]);
+    const len = Math.hypot(dirX, dirZ) || 1;
+    const nx = dirX / len;
+    const nz = dirZ / len;
+    for (const p of parts) {
+      const sp = 2.8 + Math.random() * 2.5;
+      this._spawnGib(
+        p.mesh,
+        nx * sp + (Math.random() - 0.5) * 2.2,
+        nz * sp + (Math.random() - 0.5) * 2.2,
+        2.2 + Math.random() * 2.2,
+        1.8,
+      );
+    }
+    this._bloodBurst(s.mesh.position.x, s.mesh.position.z, { heavy: false });
+    return true;
+  }
+
+  _clubHasLimbs(s) {
+    const rig = s?.mesh?.userData?.rig;
+    if (!rig) return false;
+    return !!(rig.lArm || rig.rArm || rig.lLeg || rig.rLeg || rig.head);
+  }
+
+  _discardClubWeapon(e, opts = {}) {
+    if (!e?.weaponCiv) return;
+    const s = e.weaponCiv;
+    e.weaponCiv = null;
+    e.clubHits = 0;
+    e.clubSwingT = 0;
+    e.clubDidHit = false;
+    if (!s) return;
+    s.weaponBy = null;
+    if (!this.spaniards.includes(s)) return;
+
+    const fx = Math.sin(e.mesh.rotation.y);
+    const fz = Math.cos(e.mesh.rotation.y);
+    if (opts.fling) {
+      // Remaining stump tumbles away
+      const idx = this.spaniards.indexOf(s);
+      if (idx >= 0) {
+        this.spaniards.splice(idx, 1);
+        if (s.bubble) s.bubble.remove();
+        this._spawnGib(
+          s.mesh,
+          fx * (3 + Math.random() * 2) + (Math.random() - 0.5),
+          fz * (3 + Math.random() * 2) + (Math.random() - 0.5),
+          2.5 + Math.random() * 2,
+          2.2,
+        );
+        this._bloodBurst(e.mesh.position.x, e.mesh.position.z, { heavy: true });
+      }
+    } else {
+      this._killSpaniard(s, { fromPunch: true, dirX: fx, dirZ: fz });
+    }
+  }
+
+  _updateClubWeapons(dt) {
+    for (const e of this.enemies) {
+      if (!e.weaponCiv) continue;
+      const s = e.weaponCiv;
+      const ok = this.spaniards.includes(s) && s.hp > 0 && e.hp > 0 && e.knockdownTimer <= 0;
+      if (!ok || !this._atkEnabled('club')) {
+        this._discardClubWeapon(e, { fling: true });
+        continue;
+      }
+
+      let swingU = 0;
+      if (e.clubSwingT > 0) {
+        const prev = e.clubSwingT;
+        e.clubSwingT = Math.max(0, e.clubSwingT - dt);
+        swingU = 1 - e.clubSwingT / LEADER_CLUB_SWING;
+        // Connect near mid-swing
+        if (!e.clubDidHit && swingU >= 0.42 && swingU <= 0.72) {
+          e.clubDidHit = true;
+          this._resolveClubHit(e, s);
+        }
+        // If swing ended without a hit resolve (out of range), still shed a limb from the force
+        if (prev > 0 && e.clubSwingT <= 0 && !e.clubDidHit) {
+          e.clubDidHit = true;
+          const fx = Math.sin(e.mesh.rotation.y);
+          const fz = Math.cos(e.mesh.rotation.y);
+          this._clubDetachLimb(s, fx, fz);
+          e.clubHits = Math.max(0, (e.clubHits || 0) - 1);
+          if (e.clubHits <= 0 || !this._clubHasLimbs(s)) {
+            this._discardClubWeapon(e, { fling: true });
+            continue;
+          }
+        }
+      }
+
+      this._poseClubWeapon(e, s, swingU);
+      if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
+    }
+  }
+
+  _resolveClubHit(e, s) {
+    const fx = Math.sin(e.mesh.rotation.y);
+    const fz = Math.cos(e.mesh.rotation.y);
+    const reach = e.r + PLAYER_RADIUS + LEADER_CLUB_REACH;
+    let hitSomething = false;
+
+    if (this.playerAlive) {
+      const dist = Math.hypot(
+        this.player.position.x - e.mesh.position.x,
+        this.player.position.z - e.mesh.position.z,
+      );
+      // Prefer hits in front of the swing
+      const toPx = this.player.position.x - e.mesh.position.x;
+      const toPz = this.player.position.z - e.mesh.position.z;
+      const facing = (toPx * fx + toPz * fz) / (dist || 1);
+      if (dist < reach && facing > 0.15) {
+        const nx = toPx / (dist || 1);
+        const nz = toPz / (dist || 1);
+        this._hurt(e.damage + 1, nx, nz);
+        this.kbx = nx * PLAYER_KNOCK_SPEED * 1.45;
+        this.kbz = nz * PLAYER_KNOCK_SPEED * 1.45;
+        this._spark(this.player.position.x, this.player.position.z, COL.blood, 8, 0.32, 1.1);
+        this.sfx.punchHit({ hard: true });
+        hitSomething = true;
+      }
+    }
+
+    if (!hitSomething) {
+      for (const t of this.towers) {
+        if (!t || t.hp <= 0) continue;
+        const d = Math.hypot(t.mesh.position.x - e.mesh.position.x, t.mesh.position.z - e.mesh.position.z);
+        const toTx = t.mesh.position.x - e.mesh.position.x;
+        const toTz = t.mesh.position.z - e.mesh.position.z;
+        const facing = (toTx * fx + toTz * fz) / (d || 1);
+        if (d < reach + 0.3 && facing > 0.1) {
+          this._hurtTower(t, e.damage + 1);
+          this.sfx.punchHit({ hard: true });
+          hitSomething = true;
+          break;
+        }
+      }
+    }
+
+    // Limbs shear off whether or not the swing connected cleanly
+    this._clubDetachLimb(s, fx, fz);
+    e.clubHits = Math.max(0, (e.clubHits || 0) - 1);
+    this.shake = Math.min(0.85, this.shake + 0.18);
+    if (Math.random() < 0.5) this._sayInvader(e, randPick(LEADER_LINES));
+
+    if (e.clubHits <= 0 || !this._clubHasLimbs(s)) {
+      this._discardClubWeapon(e, { fling: true });
     }
   }
 
   /** Solo invader peels off to punch a nearby civilian. */
   _maybeHuntPunch(e) {
     if (!this._atkEnabled('punch')) return;
-    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.weaponCiv || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
     if (!this._atkSolo('punch') && Math.random() > 0.48) return;
 
     let bestS = null;
     let bestD = PUNCH_HUNT_CIV_RANGE + (this._atkSolo('punch') ? 4 : 0);
     for (const s of this.spaniards) {
-      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
       if (this._countHuntersOn(s) > 0) continue;
       const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
       if (d < bestD) {
@@ -2921,14 +3411,14 @@ export class Game {
   /** Solo invader peels off to pin and behead a civilian with a machete. */
   _maybeHuntBehead(e) {
     if (!this._atkEnabled('behead')) return;
-    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.weaponCiv || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
     if (!this._atkSolo('behead') && Math.random() > 0.42) return;
 
     let bestS = null;
     let bestD = PUNCH_HUNT_CIV_RANGE + (this._atkSolo('behead') ? 5 : 0.8);
     for (const s of this.spaniards) {
-      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
       if (this._countHuntersOn(s) > 0) continue;
       const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
       if (d < bestD) {
@@ -2953,7 +3443,7 @@ export class Game {
     let bestS = null;
     let bestD = TEAR_PAIR_CIV_RANGE + (this._atkSolo('tear') ? 3 : 0);
     for (const s of this.spaniards) {
-      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading || s.weaponBy) continue;
       if (this._countHuntersOn(s) > 0) continue;
       const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
       if (d < bestD) {
@@ -3147,7 +3637,7 @@ export class Game {
     const killer = s.beheading.killer;
     if (killer) {
       if (killer.beheading === s) killer.beheading = null;
-      setMachete(killer.mesh, killer.kind === 'leader');
+      setMachete(killer.mesh, false);
       this._clearCivHunt(killer);
     }
     s.beheading = null;
@@ -3380,7 +3870,7 @@ export class Game {
 
     if (killer) {
       if (killer.beheading === s) killer.beheading = null;
-      setMachete(killer.mesh, killer.kind === 'leader');
+      setMachete(killer.mesh, false);
       this._clearCivHunt(killer);
       if (Math.random() < 0.5) this._sayInvader(killer, randPick(INVADER_CIV_LINES));
     }
@@ -3766,6 +4256,15 @@ export class Game {
     if (s.tearing) this._cancelTear(s);
     if (s.beheading) this._cancelBehead(s);
     if (s.heldBy) this._releaseHold(s);
+    if (s.weaponBy) {
+      const holder = s.weaponBy;
+      if (holder.weaponCiv === s) {
+        holder.weaponCiv = null;
+        holder.clubHits = 0;
+        holder.clubSwingT = 0;
+      }
+      s.weaponBy = null;
+    }
     const idx = this.spaniards.indexOf(s);
     if (idx < 0) return;
     const x = s.mesh.position.x;
@@ -3782,8 +4281,13 @@ export class Game {
       if (e.civTarget === s) this._clearCivHunt(e);
       if (e.tearing === s) e.tearing = null;
       if (e.holding === s) e.holding = null;
+      if (e.weaponCiv === s) {
+        e.weaponCiv = null;
+        e.clubHits = 0;
+        e.clubSwingT = 0;
+      }
       if (e.beheading === s) {
-        setMachete(e.mesh, e.kind === 'leader');
+        setMachete(e.mesh, false);
         e.beheading = null;
       }
     }
@@ -3804,8 +4308,8 @@ export class Game {
 
       if (s.speechLife <= 0 && s.bubble) s.bubble.classList.remove('on');
 
-      // Being pulled apart, held, or executed — posing handled elsewhere
-      if (s.tearing || s.heldBy || s.beheading) {
+      // Being pulled apart, held, used as a weapon, or executed — posing handled elsewhere
+      if (s.tearing || s.heldBy || s.beheading || s.weaponBy) {
         updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
         continue;
       }
@@ -4006,6 +4510,8 @@ export class Game {
   _breach(index) {
     const e = this.enemies[index];
     if (!e) return;
+    if (e.weaponCiv) this._discardClubWeapon(e, { fling: true });
+    if (e.holding) this._releaseHold(e.holding);
     this.breached += 1;
     this.shake = Math.min(1.0, this.shake + 0.35);
     this._spark(e.mesh.position.x, e.mesh.position.z, 0xaa3030, 10, 0.35, 1.0);
@@ -4038,6 +4544,7 @@ export class Game {
   _killEnemy(index, opts = {}) {
     const e = this.enemies[index];
     if (!e) return;
+    if (e.weaponCiv) this._discardClubWeapon(e, { fling: true });
     if (e.holding) this._releaseHold(e.holding);
     if (e.beheading) this._cancelBehead(e.beheading);
     if (e.tearing) {
