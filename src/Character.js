@@ -165,6 +165,11 @@ export function createPerson(palette, opts = {}) {
   const mBlade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.58, 0.14), mat(0xb0b8c0));
   mBlade.position.set(0.01, -0.4, 0.02);
   macheteRoot.add(mBlade);
+  const macheteTip = new THREE.Object3D();
+  // Tip of the blade (along local -Y from the handle)
+  macheteTip.position.set(0.01, -0.72, 0.02);
+  macheteRoot.add(macheteTip);
+  rig.macheteTip = macheteTip;
   macheteRoot.visible = false;
 
   const legX = female ? 0.13 : 0.14;

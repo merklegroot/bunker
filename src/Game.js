@@ -2958,6 +2958,127 @@ export class Game {
     s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
   }
 
+  /**
+   * World point where the blade meets the neck: a pace in front of the killer,
+   * slightly to their right (right-handed chop), at prone neck height.
+   * Kept stable for the whole pin — do not track the raised blade tip.
+   */
+  _beheadNeckTarget(killer) {
+    if (!this._beheadNeck) this._beheadNeck = new THREE.Vector3();
+    const facing = killer.mesh.rotation.y;
+    const fx = Math.sin(facing);
+    const fz = Math.cos(facing);
+    // Forward ~ reach of a lowered right arm; right ~ shoulder / swing bias
+    this._beheadNeck.set(
+      killer.mesh.position.x + fx * 0.68 + fz * 0.16,
+      0.33,
+      killer.mesh.position.z + fz * 0.68 - fx * 0.16,
+    );
+    return this._beheadNeck;
+  }
+
+  /**
+   * Face-down, head toward killer, feet away. Snaps so the neck (not the skull
+   * center, not the feet origin) sits on `neckTarget`.
+   */
+  _poseBeheadVictim(s, killer, neckTarget) {
+    const facing = killer.mesh.rotation.y;
+    const fx = Math.sin(facing);
+    const fz = Math.cos(facing);
+
+    // YXZ: yaw opposite the killer, then pitch into the ground → head toward killer
+    s.mesh.rotation.y = facing + Math.PI;
+    s.mesh.rotation.x = Math.PI / 2;
+    s.mesh.rotation.z = 0;
+
+    // Seed past the neck so the head can settle on the killer's side of the cut
+    s.mesh.position.set(
+      neckTarget.x + fx * 1.85,
+      0.28,
+      neckTarget.z + fz * 1.85,
+    );
+    s.mesh.updateMatrixWorld(true);
+
+    const rig = s.mesh.userData.rig;
+    if (!rig?.head) {
+      s.mesh.position.set(neckTarget.x + fx * 1.6, 0.28, neckTarget.z + fz * 1.6);
+      return;
+    }
+
+    if (!this._beheadHead) this._beheadHead = new THREE.Vector3();
+    if (!this._beheadTorso) this._beheadTorso = new THREE.Vector3();
+    rig.head.getWorldPosition(this._beheadHead);
+    if (rig.torso) rig.torso.getWorldPosition(this._beheadTorso);
+    else this._beheadTorso.copy(this._beheadHead);
+
+    // Neck sits between head and torso, biased toward the head
+    const nx = this._beheadHead.x * 0.62 + this._beheadTorso.x * 0.38;
+    const ny = this._beheadHead.y * 0.62 + this._beheadTorso.y * 0.38;
+    const nz = this._beheadHead.z * 0.62 + this._beheadTorso.z * 0.38;
+
+    s.mesh.position.x += neckTarget.x - nx;
+    s.mesh.position.y += neckTarget.y - ny;
+    s.mesh.position.z += neckTarget.z - nz;
+  }
+
+  _poseBeheadKiller(killer, t) {
+    const krig = killer.mesh.userData.rig;
+    if (!krig?.lArm || !krig?.rArm) return;
+    killer.mesh.position.y = 0;
+
+    if (t < BEHEAD_PIN) {
+      // Kneel-press over the upper back / neck
+      krig.lArm.rotation.x = -1.35;
+      krig.rArm.rotation.x = -1.25;
+      krig.lArm.rotation.y = 0;
+      krig.rArm.rotation.y = 0;
+      krig.lArm.rotation.z = -0.15;
+      krig.rArm.rotation.z = 0.2;
+      if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
+      if (krig.rElbow) krig.rElbow.rotation.x = -0.45;
+      if (krig.lLeg) krig.lLeg.rotation.x = 0.55;
+      if (krig.rLeg) krig.rLeg.rotation.x = -0.35;
+    } else if (t < BEHEAD_DRAW) {
+      const u = (t - BEHEAD_PIN) / Math.max(0.001, BEHEAD_DRAW - BEHEAD_PIN);
+      krig.lArm.rotation.x = -1.35;
+      krig.lArm.rotation.z = -0.2;
+      krig.rArm.rotation.x = -0.4 - u * 0.5;
+      krig.rArm.rotation.z = 0.55 + u * 0.35;
+      krig.rArm.rotation.y = -u * 0.4;
+      if (krig.rElbow) krig.rElbow.rotation.x = -0.7 + u * 0.2;
+      if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
+      if (krig.machete) krig.machete.rotation.z = -0.4 + u * 0.2;
+    } else if (t < BEHEAD_RAISE) {
+      const u = (t - BEHEAD_DRAW) / Math.max(0.001, BEHEAD_RAISE - BEHEAD_DRAW);
+      krig.lArm.rotation.x = -1.2;
+      krig.lArm.rotation.z = -0.25;
+      // Left stays on the upper back while the blade rises
+      krig.rArm.rotation.x = -0.9 - u * 1.5;
+      krig.rArm.rotation.z = 0.25 - u * 0.1;
+      krig.rArm.rotation.y = -0.3 + u * 0.15;
+      if (krig.rElbow) krig.rElbow.rotation.x = -0.2 - u * 0.15;
+      if (krig.lElbow) krig.lElbow.rotation.x = -0.5;
+      if (krig.machete) krig.machete.rotation.z = -0.15;
+      if (krig.head) krig.head.rotation.x = -0.1;
+    } else if (t < BEHEAD_CHOP) {
+      const u = (t - BEHEAD_RAISE) / Math.max(0.001, BEHEAD_CHOP - BEHEAD_RAISE);
+      const ease = u * u;
+      krig.lArm.rotation.x = -1.15;
+      krig.lArm.rotation.z = -0.2;
+      krig.rArm.rotation.x = -2.4 + ease * 2.6;
+      krig.rArm.rotation.z = 0.15;
+      krig.rArm.rotation.y = -0.1;
+      if (krig.rElbow) krig.rElbow.rotation.x = -0.35 + ease * 0.2;
+      if (krig.machete) krig.machete.rotation.z = -0.1 + ease * 0.5;
+    } else {
+      krig.lArm.rotation.x = -1.1;
+      krig.rArm.rotation.x = 0.35;
+      krig.rArm.rotation.z = 0.2;
+      if (krig.rElbow) krig.rElbow.rotation.x = -0.25;
+      if (krig.machete) krig.machete.rotation.z = 0.45;
+    }
+  }
+
   _updateBeheadings(dt) {
     for (let i = this.spaniards.length - 1; i >= 0; i--) {
       const s = this.spaniards[i];
@@ -2975,46 +3096,38 @@ export class Game {
       }
 
       B.t += dt;
+      const t = B.t;
       const facing = killer.mesh.rotation.y;
       const fx = Math.sin(facing);
       const fz = Math.cos(facing);
-      const kx = killer.mesh.position.x;
-      const kz = killer.mesh.position.z;
-      // Blade comes down just in front of the killer, slightly to their right
-      const chopX = kx + fx * 0.58 + fz * 0.2;
-      const chopZ = kz + fz * 0.58 - fx * 0.2;
-      const chopY = 0.4;
+      const neck = this._beheadNeckTarget(killer);
 
-      s.mesh.rotation.y = facing + Math.PI;
-      s.mesh.rotation.x = Math.PI / 2;
-      s.mesh.rotation.z = Math.sin(this.time * 14) * 0.04;
       s.kbx = 0;
       s.kbz = 0;
-      killer.mesh.position.y = 0;
 
-      const krig = killer.mesh.userData.rig;
-      const vrig = s.mesh.userData.rig;
-      const t = B.t;
+      // Killer pose first (drives the read of the execution)
+      if (t >= BEHEAD_PIN && !B.drew) {
+        B.drew = true;
+        setMachete(killer.mesh, true);
+        this.sfx.macheteDraw();
+      } else if (t >= BEHEAD_DRAW && !B.raised) {
+        B.raised = true;
+        setMachete(killer.mesh, true);
+      }
+      this._poseBeheadKiller(killer, t);
 
       if (!B.chopped) {
-        // Place roughly, then snap so the head sits under the blade path
-        s.mesh.position.set(kx + fx * 2.05, 0.3, kz + fz * 2.05);
-        s.mesh.updateMatrixWorld(true);
-        if (vrig?.head) {
-          if (!this._beheadHead) this._beheadHead = new THREE.Vector3();
-          vrig.head.getWorldPosition(this._beheadHead);
-          s.mesh.position.x += chopX - this._beheadHead.x;
-          s.mesh.position.z += chopZ - this._beheadHead.z;
-          s.mesh.position.y += chopY - this._beheadHead.y;
-        } else {
-          s.mesh.position.set(chopX + fx * 1.65, 0.3, chopZ + fz * 1.65);
-        }
+        this._poseBeheadVictim(s, killer, neck);
       } else {
+        s.mesh.rotation.y = facing + Math.PI;
+        s.mesh.rotation.x = Math.PI / 2;
+        s.mesh.rotation.z = 0;
         s.mesh.position.x = B.bodyX;
         s.mesh.position.y = B.bodyY;
         s.mesh.position.z = B.bodyZ;
       }
 
+      const vrig = s.mesh.userData.rig;
       if (vrig?.lArm && vrig?.rArm) {
         const flail = Math.sin(this.time * 16) * 0.5;
         vrig.lArm.rotation.x = -0.3 + flail;
@@ -3025,90 +3138,20 @@ export class Game {
         if (vrig.rLeg) vrig.rLeg.rotation.x = 0.35 - flail * 0.2;
       }
 
-      if (krig?.lArm && krig?.rArm) {
-        if (t < BEHEAD_PIN) {
-          // Kneel-press: both hands pinning the back
-          krig.lArm.rotation.x = -1.35;
-          krig.rArm.rotation.x = -1.25;
-          krig.lArm.rotation.z = -0.15;
-          krig.rArm.rotation.z = 0.2;
-          if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
-          if (krig.rElbow) krig.rElbow.rotation.x = -0.45;
-          if (krig.lLeg) krig.lLeg.rotation.x = 0.55;
-          if (krig.rLeg) krig.rLeg.rotation.x = -0.35;
-        } else if (t < BEHEAD_DRAW) {
-          // Left keeps pin; right draws the blade
-          if (!B.drew) {
-            B.drew = true;
-            setMachete(killer.mesh, true);
-            this.sfx.macheteDraw();
-          }
-          const u = (t - BEHEAD_PIN) / Math.max(0.001, BEHEAD_DRAW - BEHEAD_PIN);
-          krig.lArm.rotation.x = -1.35;
-          krig.lArm.rotation.z = -0.2;
-          krig.rArm.rotation.x = -0.4 - u * 0.5;
-          krig.rArm.rotation.z = 0.55 + u * 0.35;
-          krig.rArm.rotation.y = -u * 0.4;
-          if (krig.rElbow) krig.rElbow.rotation.x = -0.7 + u * 0.2;
-          if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
-          if (krig.machete) krig.machete.rotation.z = -0.4 + u * 0.2;
-        } else if (t < BEHEAD_RAISE) {
-          // Raise overhead
-          if (!B.raised) {
-            B.raised = true;
-            setMachete(killer.mesh, true);
-          }
-          const u = (t - BEHEAD_DRAW) / Math.max(0.001, BEHEAD_RAISE - BEHEAD_DRAW);
-          krig.lArm.rotation.x = -1.2;
-          krig.lArm.rotation.z = -0.25;
-          krig.rArm.rotation.x = -0.9 - u * 1.5;
-          krig.rArm.rotation.z = 0.25 - u * 0.1;
-          krig.rArm.rotation.y = -0.3 + u * 0.15;
-          if (krig.rElbow) krig.rElbow.rotation.x = -0.2 - u * 0.15;
-          if (krig.lElbow) krig.lElbow.rotation.x = -0.5;
-          if (krig.machete) krig.machete.rotation.z = -0.15;
-          if (krig.head) krig.head.rotation.x = -0.1;
-        } else if (t < BEHEAD_CHOP) {
-          // Swing down
-          const u = (t - BEHEAD_RAISE) / Math.max(0.001, BEHEAD_CHOP - BEHEAD_RAISE);
-          const ease = u * u;
-          krig.lArm.rotation.x = -1.15;
-          krig.lArm.rotation.z = -0.2;
-          krig.rArm.rotation.x = -2.4 + ease * 2.6;
-          krig.rArm.rotation.z = 0.15;
-          krig.rArm.rotation.y = -0.1;
-          if (krig.rElbow) krig.rElbow.rotation.x = -0.35 + ease * 0.2;
-          if (krig.machete) krig.machete.rotation.z = -0.1 + ease * 0.5;
-        } else {
-          // Follow-through / hold after the cut
-          krig.lArm.rotation.x = -1.1;
-          krig.rArm.rotation.x = 0.35;
-          krig.rArm.rotation.z = 0.2;
-          if (krig.rElbow) krig.rElbow.rotation.x = -0.25;
-          if (krig.machete) krig.machete.rotation.z = 0.45;
-        }
-      }
-
       if (t >= BEHEAD_CHOP && !B.chopped) {
         B.chopped = true;
         B.bodyX = s.mesh.position.x;
         B.bodyY = s.mesh.position.y;
         B.bodyZ = s.mesh.position.z;
-        let hx = chopX;
-        let hz = chopZ;
-        if (vrig?.head) {
-          if (!this._beheadHead) this._beheadHead = new THREE.Vector3();
-          s.mesh.updateMatrixWorld(true);
-          vrig.head.getWorldPosition(this._beheadHead);
-          hx = this._beheadHead.x;
-          hz = this._beheadHead.z;
-        }
+        const hx = neck.x;
+        const hz = neck.z;
         const parts = detachBodyParts(s.mesh, ['head']);
         for (const p of parts) {
+          // Head tumbles away from the killer along the body axis
           this._spawnGib(
             p.mesh,
-            fx * (2.5 + Math.random() * 2) + (Math.random() - 0.5) * 1.5,
-            fz * (2.5 + Math.random() * 2) + (Math.random() - 0.5) * 1.5,
+            -fx * (1.2 + Math.random()) + (Math.random() - 0.5) * 1.2,
+            -fz * (1.2 + Math.random()) + (Math.random() - 0.5) * 1.2,
             2.2 + Math.random() * 3,
             2.2,
           );
