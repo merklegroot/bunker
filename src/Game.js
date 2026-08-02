@@ -38,8 +38,9 @@ const LEADER_POUND_RISE = 0.32;
 const LEADER_POUND_HANG = 0.14;
 const LEADER_POUND_SLAM = 0.2;
 const LEADER_CLUB_MAX_HITS = 3;
-const LEADER_CLUB_REACH = 2.15;
-const LEADER_CLUB_SWING = 0.42;
+const LEADER_CLUB_REACH = 2.6;
+const LEADER_CLUB_SWING = 0.58;
+const LEADER_CLUB_READY = 0.55;
 const CAM_VIEW_H = 13.5;
 /** Ortho frustum scale: lower = zoomed in. */
 const CAM_ZOOM_MIN = 0.72;
@@ -2130,6 +2131,7 @@ export class Game {
       clubHits: 0,
       clubSwingT: 0,
       clubDidHit: false,
+      clubReadyCd: 0,
       regenDelay: 0,
       // Leader: war-cry rally, fists, ground pound, occasional machete charge
       rallyCd: isLeader ? 2.5 + Math.random() * 2 : 0,
@@ -2342,34 +2344,42 @@ export class Game {
           e.poundT = 0;
           if (!e.swimming) e.mesh.position.y = 0;
         }
-      } else if (
-        clubbing
-        && e.aggroTimer > 0
-        && e.aggroTarget !== 'tower'
-        && this.playerAlive
-      ) {
-        // Club swing — straight at the player, phases through buildings
-        phaseWalls = true;
-        const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
-        const nx = (px - e.mesh.position.x) / dist;
-        const nz = (pz - e.mesh.position.z) / dist;
-        const reach = e.r + PLAYER_RADIUS + LEADER_CLUB_REACH;
-        const holdDist = reach - 0.35;
-        e.mesh.rotation.y = Math.atan2(nx, nz);
-        if (e.clubSwingT > 0 || dist > holdDist + 0.12) {
-          // Lunge through obstacles during the swing; otherwise close distance
-          mx = nx;
-          mz = nz;
-        } else if (dist < holdDist - 0.15) {
-          mx = -nx;
-          mz = -nz;
+      } else if (clubbing) {
+        // Use the dragged body as a weapon against whatever is in reach
+        const aim = this._leaderClubAim(e, px, pz);
+        if (aim) {
+          phaseWalls = true;
+          const dist = Math.hypot(aim.x - e.mesh.position.x, aim.z - e.mesh.position.z) || 1;
+          const nx = (aim.x - e.mesh.position.x) / dist;
+          const nz = (aim.z - e.mesh.position.z) / dist;
+          const reach = e.r + (aim.kind === 'player' ? PLAYER_RADIUS : 0.55) + LEADER_CLUB_REACH;
+          const holdDist = reach - 0.4;
+          e.mesh.rotation.y = Math.atan2(nx, nz);
+          if (e.clubSwingT > 0 || dist > holdDist + 0.12) {
+            mx = nx;
+            mz = nz;
+          } else if (dist < holdDist - 0.2) {
+            mx = -nx;
+            mz = -nz;
+          } else {
+            mx = 0;
+            mz = 0;
+          }
+          if (
+            e.clubSwingT <= 0
+            && (e.clubReadyCd || 0) <= 0
+            && dist < reach + 1.4
+          ) {
+            e.clubSwingT = LEADER_CLUB_SWING;
+            e.clubDidHit = false;
+          }
         } else {
-          mx = 0;
-          mz = 0;
-        }
-        if (e.clubSwingT <= 0 && dist < reach + 1.2) {
-          e.clubSwingT = LEADER_CLUB_SWING;
-          e.clubDidHit = false;
+          // Nothing to smash — keep rampaging while dragging
+          const point = this._leaderRampagePoint(e, dest, dt);
+          const steer = this._steer(e, point.x, point.z);
+          mx = steer.x;
+          mz = steer.z;
+          if (mx || mz) e.mesh.rotation.y = Math.atan2(mx, mz);
         }
       } else if (e.charging && this.playerAlive) {
         // Leader machete charge — straight rush through buildings, heavy hit on contact
@@ -3277,6 +3287,7 @@ export class Game {
     e.clubHits = LEADER_CLUB_MAX_HITS;
     e.clubSwingT = 0;
     e.clubDidHit = false;
+    e.clubReadyCd = 0.45; // drag a beat, then smash
     e.civTarget = null;
     e.civHuntMode = null;
     e.civHuntTimer = 0;
@@ -3370,42 +3381,58 @@ export class Game {
       // Keep torso/head from burying into the sand while the held foot stays up
       s.mesh.position.y += bounce * 0.25;
     } else {
-      // Haul up from the foot grip, then arc the body like a club
-      const lift = Math.min(1, swingU / 0.28);
-      const strike = Math.max(0, (swingU - 0.28) / 0.72);
-      const wind = Math.sin(strike * Math.PI);
-      const arc = (strike - 0.5) * 2;
+      // Haul up, wind far back, then whip through a wide arc past the target
+      const lift = Math.min(1, swingU / 0.22);
+      const strike = Math.max(0, (swingU - 0.22) / 0.78);
+      const wind = Math.min(1, strike / 0.28); // pull-back
+      const smash = Math.max(0, (strike - 0.28) / 0.72); // release through
+      const smashEase = smash * smash * (3 - 2 * smash);
+
+      // Wide horizontal sweep: deep behind-right → far past front-left
+      const back = -0.35 - wind * 0.95 + smashEase * 2.55;
+      const side = 0.55 + wind * 0.95 - smashEase * 2.65;
+      const height = 0.45 + lift * 0.85 + wind * 0.55 + Math.sin(smashEase * Math.PI) * 0.55;
 
       if (lrig?.rArm && lrig?.lArm) {
-        lrig.rArm.rotation.x = 0.55 - lift * 2.3 - wind * 0.45;
-        lrig.rArm.rotation.y = 0.35 - lift * 0.35;
-        lrig.rArm.rotation.z = 1.15 - lift * 0.4 + arc * 0.35;
-        lrig.lArm.rotation.x = 0.15 - lift * 1.25;
-        lrig.lArm.rotation.z = -0.2 - lift * 0.1;
-        if (lrig.rElbow) lrig.rElbow.rotation.x = -1.15 + lift * 0.5;
+        lrig.rArm.rotation.x = 0.55 - lift * 1.6 - wind * 1.35 + smashEase * 0.35;
+        lrig.rArm.rotation.y = 0.35 + wind * 0.55 - smashEase * 1.35;
+        lrig.rArm.rotation.z = 1.15 + wind * 0.55 - smashEase * 1.85;
+        lrig.lArm.rotation.x = 0.15 - lift * 1.1 - smashEase * 0.4;
+        lrig.lArm.rotation.z = -0.2 - wind * 0.15 - smashEase * 0.25;
+        if (lrig.rElbow) lrig.rElbow.rotation.x = -1.15 + lift * 0.35 + smashEase * 0.4;
         if (lrig.lElbow) lrig.lElbow.rotation.x = -0.35;
       }
       if (lrig?.torso) {
-        lrig.torso.rotation.x = 0.28 - lift * 0.2;
-        lrig.torso.rotation.y = 0.22 - lift * 0.25;
-        lrig.torso.rotation.z = -0.08;
+        lrig.torso.rotation.x = 0.28 - lift * 0.15 + smashEase * 0.2;
+        lrig.torso.rotation.y = 0.22 + wind * 0.55 - smashEase * 1.15;
+        lrig.torso.rotation.z = -0.08 + wind * 0.12 - smashEase * 0.2;
       }
 
       e.mesh.updateMatrixWorld(true);
       const grip = this._clubGrip;
-      if (lrig?.rHand) lrig.rHand.getWorldPosition(grip);
-      else {
+      if (lrig?.rHand) {
+        lrig.rHand.getWorldPosition(grip);
+      } else {
         grip.set(
-          e.mesh.position.x + fx * (-0.2 + lift * 0.9 + wind * 0.7) + sx * (0.7 - arc * 0.8),
-          0.35 + lift * 1.2 + wind * 0.35,
-          e.mesh.position.z + fz * (-0.2 + lift * 0.9 + wind * 0.7) + sz * (0.7 - arc * 0.8),
+          e.mesh.position.x + fx * back + sx * side,
+          height,
+          e.mesh.position.z + fz * back + sz * side,
         );
       }
+      // Prefer the animated hand, but push the body along the wide arc
+      const arcX = e.mesh.position.x + fx * back + sx * side;
+      const arcZ = e.mesh.position.z + fz * back + sz * side;
+      const arcY = height;
+      // Blend hand grip with the intended wide arc so the body really travels
+      const blend = 0.35 + smashEase * 0.45;
+      grip.x = grip.x * (1 - blend) + arcX * blend;
+      grip.y = grip.y * (1 - blend) + arcY * blend;
+      grip.z = grip.z * (1 - blend) + arcZ * blend;
 
       s.mesh.rotation.order = 'YXZ';
-      s.mesh.rotation.y = facing + Math.PI * (1 - lift * 0.5) + arc * 0.85;
-      s.mesh.rotation.x = Math.PI / 2 - 0.25 * lift;
-      s.mesh.rotation.z = arc * 0.75;
+      s.mesh.rotation.y = facing + Math.PI * (1 - lift * 0.35) - wind * 0.4 + smashEase * 2.4;
+      s.mesh.rotation.x = Math.PI / 2 - 0.2 * lift - smashEase * 0.35;
+      s.mesh.rotation.z = -wind * 0.6 + smashEase * 1.8;
 
       s.mesh.position.copy(grip);
       s.mesh.updateMatrixWorld(true);
@@ -3517,10 +3544,56 @@ export class Game {
     }
   }
 
+  /**
+   * What the boss should smash with a dragged body.
+   * Player only if already provoked; otherwise towers / other civilians.
+   */
+  _leaderClubAim(e, px, pz) {
+    if (!e?.weaponCiv) return null;
+    const ex = e.mesh.position.x;
+    const ez = e.mesh.position.z;
+
+    if (e.aggroTimer > 0 && e.aggroTarget !== 'tower' && this.playerAlive) {
+      return { x: px, z: pz, kind: 'player' };
+    }
+
+    let best = null;
+    let bestD = 12;
+
+    if (e.aggroTimer > 0 && e.aggroTarget === 'tower') {
+      const t = this._nearestPlacedTower(ex, ez);
+      if (t) {
+        return { x: t.mesh.position.x, z: t.mesh.position.z, kind: 'tower', ref: t };
+      }
+    }
+
+    for (const t of this.towers) {
+      if (!t || t.hp <= 0) continue;
+      const d = Math.hypot(t.mesh.position.x - ex, t.mesh.position.z - ez);
+      if (d < bestD) {
+        bestD = d;
+        best = { x: t.mesh.position.x, z: t.mesh.position.z, kind: 'tower', ref: t };
+      }
+    }
+
+    for (const s of this.spaniards) {
+      if (!s || s === e.weaponCiv || s.hp <= 0) continue;
+      if (s.weaponBy || s.tearing || s.beheading) continue;
+      const d = Math.hypot(s.mesh.position.x - ex, s.mesh.position.z - ez);
+      if (d < bestD) {
+        bestD = d;
+        best = { x: s.mesh.position.x, z: s.mesh.position.z, kind: 'civ', ref: s };
+      }
+    }
+
+    return best;
+  }
+
   _updateClubWeapons(dt) {
     for (const e of this.enemies) {
       if (!e.weaponCiv) continue;
       const s = e.weaponCiv;
+      e.clubReadyCd = Math.max(0, (e.clubReadyCd || 0) - dt);
       const ok = this.spaniards.includes(s) && s.hp > 0 && e.hp > 0 && e.knockdownTimer <= 0;
       if (!ok || !this._atkEnabled('club')) {
         this._discardClubWeapon(e, { fling: true });
@@ -3532,21 +3605,24 @@ export class Game {
         const prev = e.clubSwingT;
         e.clubSwingT = Math.max(0, e.clubSwingT - dt);
         swingU = 1 - e.clubSwingT / LEADER_CLUB_SWING;
-        // Connect near mid-swing
-        if (!e.clubDidHit && swingU >= 0.42 && swingU <= 0.72) {
+        // Connect as the body whips through the front of the arc
+        if (!e.clubDidHit && swingU >= 0.48 && swingU <= 0.78) {
           e.clubDidHit = true;
           this._resolveClubHit(e, s);
         }
-        // If swing ended without a hit resolve (out of range), still shed a limb from the force
-        if (prev > 0 && e.clubSwingT <= 0 && !e.clubDidHit) {
-          e.clubDidHit = true;
-          const fx = Math.sin(e.mesh.rotation.y);
-          const fz = Math.cos(e.mesh.rotation.y);
-          this._clubDetachLimb(s, fx, fz);
-          e.clubHits = Math.max(0, (e.clubHits || 0) - 1);
-          if (e.clubHits <= 0 || !this._clubHasLimbs(s)) {
-            this._discardClubWeapon(e, { fling: true });
-            continue;
+        // Swing finished — brief drag beat before the next smash
+        if (prev > 0 && e.clubSwingT <= 0) {
+          e.clubReadyCd = LEADER_CLUB_READY;
+          if (!e.clubDidHit) {
+            e.clubDidHit = true;
+            const fx = Math.sin(e.mesh.rotation.y);
+            const fz = Math.cos(e.mesh.rotation.y);
+            this._clubDetachLimb(s, fx, fz);
+            e.clubHits = Math.max(0, (e.clubHits || 0) - 1);
+            if (e.clubHits <= 0 || !this._clubHasLimbs(s)) {
+              this._discardClubWeapon(e, { fling: true });
+              continue;
+            }
           }
         }
       }
@@ -3559,7 +3635,7 @@ export class Game {
   _resolveClubHit(e, s) {
     const fx = Math.sin(e.mesh.rotation.y);
     const fz = Math.cos(e.mesh.rotation.y);
-    const reach = e.r + PLAYER_RADIUS + LEADER_CLUB_REACH;
+    const reach = e.r + LEADER_CLUB_REACH + 0.6;
     let hitSomething = false;
 
     if (this.playerAlive) {
@@ -3567,11 +3643,10 @@ export class Game {
         this.player.position.x - e.mesh.position.x,
         this.player.position.z - e.mesh.position.z,
       );
-      // Prefer hits in front of the swing
       const toPx = this.player.position.x - e.mesh.position.x;
       const toPz = this.player.position.z - e.mesh.position.z;
       const facing = (toPx * fx + toPz * fz) / (dist || 1);
-      if (dist < reach && facing > 0.15) {
+      if (dist < reach + PLAYER_RADIUS && facing > 0.05) {
         const nx = toPx / (dist || 1);
         const nz = toPz / (dist || 1);
         this._hurt(e.damage + 1, nx, nz);
@@ -3590,8 +3665,27 @@ export class Game {
         const toTx = t.mesh.position.x - e.mesh.position.x;
         const toTz = t.mesh.position.z - e.mesh.position.z;
         const facing = (toTx * fx + toTz * fz) / (d || 1);
-        if (d < reach + 0.3 && facing > 0.1) {
+        if (d < reach + 0.5 && facing > 0.0) {
           this._hurtTower(t, e.damage + 1);
+          this.sfx.punchHit({ hard: true });
+          hitSomething = true;
+          break;
+        }
+      }
+    }
+
+    if (!hitSomething) {
+      for (const civ of this.spaniards) {
+        if (!civ || civ === s || civ.hp <= 0 || civ.weaponBy) continue;
+        const d = Math.hypot(civ.mesh.position.x - e.mesh.position.x, civ.mesh.position.z - e.mesh.position.z);
+        const toCx = civ.mesh.position.x - e.mesh.position.x;
+        const toCz = civ.mesh.position.z - e.mesh.position.z;
+        const facing = (toCx * fx + toCz * fz) / (d || 1);
+        if (d < reach + 0.4 && facing > 0.0) {
+          const nx = toCx / (d || 1);
+          const nz = toCz / (d || 1);
+          this._hurtSpaniard(civ, Math.max(2, e.damage + 1), nx, nz);
+          this._bloodSpray(civ.mesh.position.x, civ.mesh.position.z, nx, nz, { mild: false });
           this.sfx.punchHit({ hard: true });
           hitSomething = true;
           break;
