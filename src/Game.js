@@ -592,6 +592,7 @@ export class Game {
       btnPlay: document.getElementById('btnPlay'),
       btnFast: document.getElementById('btnFast'),
       btnNextWave: document.getElementById('btnNextWave'),
+      btnReset: document.getElementById('btnReset'),
       radar: document.getElementById('radar'),
       dbgBtn: document.getElementById('dbgBtn'),
       dbgMenu: document.getElementById('dbgMenu'),
@@ -616,6 +617,7 @@ export class Game {
     if (this.el.btnPlay) this.el.btnPlay.addEventListener('click', () => this._setTimeScale(1));
     if (this.el.btnFast) this.el.btnFast.addEventListener('click', () => this._setTimeScale(SIM_FAST_SCALE));
     if (this.el.btnNextWave) this.el.btnNextWave.addEventListener('click', () => this._requestNextWave());
+    if (this.el.btnReset) this.el.btnReset.addEventListener('click', () => this._resetLevel());
     if (this.el.towerCost) this.el.towerCost.textContent = String(TOWER_SHOP_COST);
     if (this.el.dbgBtn) {
       this.el.dbgBtn.addEventListener('click', () => this._toggleDebugMenu());
@@ -1026,6 +1028,12 @@ export class Game {
     if (this.timeScale <= 0) this.timeScale = 1;
     this._beginWave(this.wave);
     this._renderSimControls();
+  }
+
+  /** Full level restart from wave 1. */
+  _resetLevel() {
+    this.start();
+    this._setPrompt('LEVEL RESET');
   }
 
   _towerOwnedCount() {
@@ -2149,7 +2157,6 @@ export class Game {
     });
     if (isLeader) {
       this._sayInvader(this.enemies[this.enemies.length - 1], randPick(LEADER_LINES));
-      this._setPrompt('THEIR LEADER HAS LANDED');
     }
   }
 
@@ -2354,7 +2361,7 @@ export class Game {
           const nz = (aim.z - e.mesh.position.z) / dist;
           const reach = e.r + (aim.kind === 'player' ? PLAYER_RADIUS : 0.55) + LEADER_CLUB_REACH;
           const holdDist = reach - 0.4;
-          e.mesh.rotation.y = Math.atan2(nx, nz);
+          e.mesh.rotation.y = this._dampYaw(e.mesh.rotation.y, Math.atan2(nx, nz), dt, 12);
           if (e.clubSwingT > 0 || dist > holdDist + 0.12) {
             mx = nx;
             mz = nz;
@@ -2379,7 +2386,9 @@ export class Game {
           const steer = this._steer(e, point.x, point.z);
           mx = steer.x;
           mz = steer.z;
-          if (mx || mz) e.mesh.rotation.y = Math.atan2(mx, mz);
+          if (mx || mz) {
+            e.mesh.rotation.y = this._dampYaw(e.mesh.rotation.y, Math.atan2(mx, mz), dt, 8);
+          }
         }
       } else if (e.charging && this.playerAlive) {
         // Leader machete charge — straight rush through buildings, heavy hit on contact
@@ -2672,19 +2681,25 @@ export class Game {
       e.mesh.position.x = clamp(this._pos.x, -this.level.HALF + 0.5, this.level.HALF - 0.5);
       e.mesh.position.z = clamp(this._pos.z, -this.level.HALF + 0.5, this.level.HALF - 0.5);
 
-      // Stuck against a wall while trying to move — force repath + small side nudge
+      // Stuck against a wall — repath occasionally (avoid per-frame nudge jitter)
       if (!phaseWalls && !downed && !stunned && moveSpeed > 0.5 && mLen > 0.05) {
         const moved = Math.hypot(e.mesh.position.x - startX, e.mesh.position.z - startZ);
-        if (moved < moveSpeed * dt * control * 0.15) {
-          if (e._pathState) e._pathState.until = 0;
-          const side = (i % 2 === 0) ? 1 : -1;
-          e.mesh.position.x += (-mz) * side * 1.2 * dt;
-          e.mesh.position.z += mx * side * 1.2 * dt;
-          this._pos.x = e.mesh.position.x;
-          this._pos.z = e.mesh.position.z;
-          resolveCircle(this._pos, e.r, this.level.walls);
-          e.mesh.position.x = this._pos.x;
-          e.mesh.position.z = this._pos.z;
+        if (moved < moveSpeed * dt * control * 0.12) {
+          e._stuckT = (e._stuckT || 0) + dt;
+          if (e._stuckT > 0.28) {
+            e._stuckT = 0;
+            if (e._pathState) e._pathState.until = 0;
+            const side = (i % 2 === 0) ? 1 : -1;
+            e.mesh.position.x += (-mz) * side * 0.55;
+            e.mesh.position.z += mx * side * 0.55;
+            this._pos.x = e.mesh.position.x;
+            this._pos.z = e.mesh.position.z;
+            resolveCircle(this._pos, e.r, this.level.walls);
+            e.mesh.position.x = this._pos.x;
+            e.mesh.position.z = this._pos.z;
+          }
+        } else {
+          e._stuckT = 0;
         }
       }
 
@@ -2708,7 +2723,7 @@ export class Game {
           stunned ? 0 : moveSpeed,
           aggressive && moveSpeed > 3.5,
           (e.panicked && aggressive) || stunned,
-          tearing || holding || beheading || clubbing || pounding,
+          tearing || holding || beheading || pounding,
           e.swimming,
         );
         updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
@@ -3308,10 +3323,13 @@ export class Game {
     this.sfx.punchHit({ hard: true });
   }
 
-  _poseClubWeapon(e, s, swingU = 0) {
+  _poseClubWeapon(e, s, swingU = 0, dt = 0.016) {
     if (!e || !s) return;
     if (!this._clubGrip) this._clubGrip = new THREE.Vector3();
     if (!this._clubFoot) this._clubFoot = new THREE.Vector3();
+    if (!this._clubTargetPos) this._clubTargetPos = new THREE.Vector3();
+    if (!this._clubTargetQuat) this._clubTargetQuat = new THREE.Quaternion();
+    if (!this._clubEuler) this._clubEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
     const facing = e.mesh.rotation.y;
     const fx = Math.sin(facing);
@@ -3321,12 +3339,19 @@ export class Game {
     const lrig = e.mesh.userData.rig;
     const vrig = s.mesh.userData.rig;
     const t = this.time;
+    const blend = 1 - Math.exp(-16 * Math.max(0.001, dt));
+    const rotBlend = 1 - Math.exp(-14 * Math.max(0.001, dt));
 
-    // Hide victim shadow — they're being hauled, not standing
     if (s.mesh.userData.shadow) s.mesh.userData.shadow.visible = false;
 
+    let ty;
+    let tx;
+    let tz;
+    const target = this._clubTargetPos;
+    const euler = this._clubEuler;
+
     if (swingU <= 0.001) {
-      // Reach down beside him to haul by the right foot
+      // Stable arm reach — no per-frame flicker
       if (lrig?.rArm && lrig?.lArm) {
         lrig.rArm.rotation.x = 0.55;
         lrig.rArm.rotation.y = 0.35;
@@ -3345,10 +3370,8 @@ export class Game {
 
       e.mesh.updateMatrixWorld(true);
       const grip = this._clubGrip;
-      if (lrig?.rHand) {
-        lrig.rHand.getWorldPosition(grip);
-      } else {
-        // Fallback if hand rig missing
+      if (lrig?.rHand) lrig.rHand.getWorldPosition(grip);
+      else {
         grip.set(
           e.mesh.position.x - fx * 0.2 + sx * 0.7,
           0.35,
@@ -3356,39 +3379,35 @@ export class Game {
         );
       }
 
-      // Body trails behind the grip; bounce as if scraping the sand
-      const bounce = Math.abs(Math.sin(t * 16)) * 0.12 + Math.abs(Math.sin(t * 27)) * 0.05;
-      const yawWobble = Math.sin(t * 9.5) * 0.22 + Math.sin(t * 14) * 0.1;
-      const pitchWobble = Math.sin(t * 12) * 0.16 + Math.cos(t * 19) * 0.08;
-      const rollWobble = Math.sin(t * 11) * 0.35 + Math.sin(t * 21) * 0.15;
+      // Gentle drag bounce (rotation only — avoids foot-snap feedback jitter)
+      const yawWobble = Math.sin(t * 7.5) * 0.12 + Math.sin(t * 11) * 0.05;
+      const pitchWobble = Math.sin(t * 8.5) * 0.1;
+      const rollWobble = Math.sin(t * 9) * 0.22 + Math.sin(t * 13) * 0.08;
 
-      s.mesh.rotation.order = 'YXZ';
-      s.mesh.rotation.y = facing + Math.PI + yawWobble;
-      s.mesh.rotation.x = Math.PI / 2 + 0.12 + pitchWobble;
-      s.mesh.rotation.z = rollWobble;
+      euler.set(Math.PI / 2 + 0.1 + pitchWobble, facing + Math.PI + yawWobble, rollWobble, 'YXZ');
+      this._clubTargetQuat.setFromEuler(euler);
 
-      // Place roughly, then snap the right foot into the hand
-      s.mesh.position.set(grip.x - fx * 0.15, Math.max(0.12, grip.y - 0.05) + bounce * 0.15, grip.z - fz * 0.15);
+      // Place root at grip (feet end); one corrective snap without post-bounce translate
+      s.mesh.quaternion.slerp(this._clubTargetQuat, rotBlend);
+      s.mesh.position.copy(grip);
       s.mesh.updateMatrixWorld(true);
       const foot = this._clubFoot;
       if (vrig?.rFoot) vrig.rFoot.getWorldPosition(foot);
       else if (vrig?.rLeg) vrig.rLeg.getWorldPosition(foot);
-      else foot.copy(s.mesh.position);
-
-      s.mesh.position.x += grip.x - foot.x;
-      s.mesh.position.y += grip.y - foot.y;
-      s.mesh.position.z += grip.z - foot.z;
-      // Keep torso/head from burying into the sand while the held foot stays up
-      s.mesh.position.y += bounce * 0.25;
+      else foot.copy(grip);
+      target.set(
+        s.mesh.position.x + (grip.x - foot.x),
+        s.mesh.position.y + (grip.y - foot.y),
+        s.mesh.position.z + (grip.z - foot.z),
+      );
+      s.mesh.position.lerp(target, blend);
     } else {
-      // Haul up, wind far back, then whip through a wide arc past the target
       const lift = Math.min(1, swingU / 0.22);
       const strike = Math.max(0, (swingU - 0.22) / 0.78);
-      const wind = Math.min(1, strike / 0.28); // pull-back
-      const smash = Math.max(0, (strike - 0.28) / 0.72); // release through
+      const wind = Math.min(1, strike / 0.28);
+      const smash = Math.max(0, (strike - 0.28) / 0.72);
       const smashEase = smash * smash * (3 - 2 * smash);
 
-      // Wide horizontal sweep: deep behind-right → far past front-left
       const back = -0.35 - wind * 0.95 + smashEase * 2.55;
       const side = 0.55 + wind * 0.95 - smashEase * 2.65;
       const height = 0.45 + lift * 0.85 + wind * 0.55 + Math.sin(smashEase * Math.PI) * 0.55;
@@ -3408,68 +3427,49 @@ export class Game {
         lrig.torso.rotation.z = -0.08 + wind * 0.12 - smashEase * 0.2;
       }
 
-      e.mesh.updateMatrixWorld(true);
-      const grip = this._clubGrip;
-      if (lrig?.rHand) {
-        lrig.rHand.getWorldPosition(grip);
-      } else {
-        grip.set(
-          e.mesh.position.x + fx * back + sx * side,
-          height,
-          e.mesh.position.z + fz * back + sz * side,
-        );
-      }
-      // Prefer the animated hand, but push the body along the wide arc
       const arcX = e.mesh.position.x + fx * back + sx * side;
       const arcZ = e.mesh.position.z + fz * back + sz * side;
       const arcY = height;
-      // Blend hand grip with the intended wide arc so the body really travels
-      const blend = 0.35 + smashEase * 0.45;
-      grip.x = grip.x * (1 - blend) + arcX * blend;
-      grip.y = grip.y * (1 - blend) + arcY * blend;
-      grip.z = grip.z * (1 - blend) + arcZ * blend;
+      // Drive body on the arc (hand follow was fighting the wide path)
+      target.set(arcX, arcY, arcZ);
 
-      s.mesh.rotation.order = 'YXZ';
-      s.mesh.rotation.y = facing + Math.PI * (1 - lift * 0.35) - wind * 0.4 + smashEase * 2.4;
-      s.mesh.rotation.x = Math.PI / 2 - 0.2 * lift - smashEase * 0.35;
-      s.mesh.rotation.z = -wind * 0.6 + smashEase * 1.8;
-
-      s.mesh.position.copy(grip);
-      s.mesh.updateMatrixWorld(true);
-      const foot = this._clubFoot;
-      if (vrig?.rFoot) vrig.rFoot.getWorldPosition(foot);
-      else if (vrig?.rLeg) vrig.rLeg.getWorldPosition(foot);
-      else foot.copy(s.mesh.position);
-      s.mesh.position.x += grip.x - foot.x;
-      s.mesh.position.y += grip.y - foot.y;
-      s.mesh.position.z += grip.z - foot.z;
+      euler.set(
+        Math.PI / 2 - 0.2 * lift - smashEase * 0.35,
+        facing + Math.PI * (1 - lift * 0.35) - wind * 0.4 + smashEase * 2.4,
+        -wind * 0.6 + smashEase * 1.8,
+        'YXZ',
+      );
+      this._clubTargetQuat.setFromEuler(euler);
+      // Snappier during the strike so the wide arc still reads
+      const strikeBlend = 1 - Math.exp(-(10 + smashEase * 14) * Math.max(0.001, dt));
+      s.mesh.quaternion.slerp(this._clubTargetQuat, strikeBlend);
+      s.mesh.position.lerp(target, strikeBlend);
     }
 
-    // Limp / flail — free limbs flop; gripped right foot stays relatively stiff
+    // Softer limb flail
     if (vrig) {
-      const flail = Math.sin(t * 18) * 0.55;
-      const flail2 = Math.cos(t * 13) * 0.4;
+      const flail = Math.sin(t * 11) * 0.35;
+      const flail2 = Math.cos(t * 8.5) * 0.28;
       if (vrig.lArm) {
-        vrig.lArm.rotation.x = 0.6 + flail;
-        vrig.lArm.rotation.z = -0.7 + flail2 * 0.5;
+        vrig.lArm.rotation.x = 0.55 + flail;
+        vrig.lArm.rotation.z = -0.55 + flail2 * 0.4;
       }
       if (vrig.rArm) {
-        vrig.rArm.rotation.x = 0.7 - flail * 0.8;
-        vrig.rArm.rotation.z = 0.65 + flail2;
+        vrig.rArm.rotation.x = 0.6 - flail * 0.7;
+        vrig.rArm.rotation.z = 0.55 + flail2;
       }
       if (vrig.lLeg) {
-        vrig.lLeg.rotation.x = 0.35 + flail2 * 0.6;
-        vrig.lLeg.rotation.z = -0.25 + Math.sin(t * 15) * 0.2;
+        vrig.lLeg.rotation.x = 0.3 + flail2 * 0.45;
+        vrig.lLeg.rotation.z = -0.2 + Math.sin(t * 9) * 0.12;
       }
       if (vrig.rLeg) {
-        // Held foot — slight tension, not a full flail
-        vrig.rLeg.rotation.x = -0.2 + Math.sin(t * 8) * 0.06;
-        vrig.rLeg.rotation.z = 0.05;
+        vrig.rLeg.rotation.x = -0.18 + Math.sin(t * 6) * 0.04;
+        vrig.rLeg.rotation.z = 0.04;
       }
       if (vrig.head) {
-        vrig.head.rotation.x = 0.65 + Math.sin(t * 10) * 0.2;
-        vrig.head.rotation.y = Math.sin(t * 7) * 0.35;
-        vrig.head.rotation.z = Math.sin(t * 12) * 0.4;
+        vrig.head.rotation.x = 0.55 + Math.sin(t * 7) * 0.12;
+        vrig.head.rotation.y = Math.sin(t * 5.5) * 0.22;
+        vrig.head.rotation.z = Math.sin(t * 8) * 0.25;
       }
     }
   }
@@ -3525,23 +3525,53 @@ export class Game {
     const fx = Math.sin(e.mesh.rotation.y);
     const fz = Math.cos(e.mesh.rotation.y);
     if (opts.fling) {
-      // Remaining stump tumbles away
+      const x = s.mesh.position.x;
+      const z = s.mesh.position.z;
       const idx = this.spaniards.indexOf(s);
-      if (idx >= 0) {
-        this.spaniards.splice(idx, 1);
-        if (s.bubble) s.bubble.remove();
+      if (idx >= 0) this.spaniards.splice(idx, 1);
+      if (s.bubble) s.bubble.remove();
+
+      // Remaining limbs explode off hard — then the stump follows
+      const leftover = ['lArm', 'rArm', 'lLeg', 'rLeg', 'head'].filter(
+        (n) => s.mesh.userData.rig?.[n],
+      );
+      const parts = leftover.length ? detachBodyParts(s.mesh, leftover) : [];
+      for (const p of parts) {
+        const ang = Math.random() * Math.PI * 2;
+        const sp = 7 + Math.random() * 6;
         this._spawnGib(
-          s.mesh,
-          fx * (3 + Math.random() * 2) + (Math.random() - 0.5),
-          fz * (3 + Math.random() * 2) + (Math.random() - 0.5),
-          2.5 + Math.random() * 2,
-          2.2,
+          p.mesh,
+          Math.cos(ang) * sp + fx * (2 + Math.random() * 3),
+          Math.sin(ang) * sp + fz * (2 + Math.random() * 3),
+          5 + Math.random() * 5,
+          2.6,
+          { spin: 36 },
         );
-        this._bloodBurst(e.mesh.position.x, e.mesh.position.z, { heavy: true });
       }
+      this._spawnGib(
+        s.mesh,
+        fx * (6 + Math.random() * 4) + (Math.random() - 0.5) * 3,
+        fz * (6 + Math.random() * 4) + (Math.random() - 0.5) * 3,
+        4.5 + Math.random() * 3.5,
+        2.8,
+        { spin: 28 },
+      );
+      this._bloodBurst(x, z, { heavy: true });
+      this._bloodSpray(x, z, fx, fz, { mild: false });
+      this._spark(x, z, COL.blood, 16, 0.55, 1.25);
+      this.shake = Math.min(1.15, this.shake + 0.45);
+      this.sfx.knockdown();
     } else {
       this._killSpaniard(s, { fromPunch: true, dirX: fx, dirZ: fz });
     }
+  }
+
+  _dampYaw(current, target, dt, rate = 10) {
+    let diff = target - current;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const k = 1 - Math.exp(-rate * Math.max(0.001, dt));
+    return current + diff * k;
   }
 
   /**
@@ -3627,7 +3657,7 @@ export class Game {
         }
       }
 
-      this._poseClubWeapon(e, s, swingU);
+      this._poseClubWeapon(e, s, swingU, dt);
       if (s.speechCd <= 0) this._saySpaniard(s, randPick(FEAR_LINES), true);
     }
   }
@@ -4467,7 +4497,7 @@ export class Game {
     this.shake = Math.min(1.1, this.shake + 0.5);
   }
 
-  _spawnGib(mesh, vx, vz, vy, life = 2.4) {
+  _spawnGib(mesh, vx, vz, vy, life = 2.4, opts = {}) {
     this.world.add(mesh);
     this.fx.push({
       mesh,
@@ -4476,7 +4506,7 @@ export class Game {
       vy,
       life: life * (0.85 + Math.random() * 0.3),
       max: life,
-      spin: (Math.random() - 0.5) * 14,
+      spin: (Math.random() - 0.5) * (opts.spin ?? 14),
       gib: true,
     });
   }

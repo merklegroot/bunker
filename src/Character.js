@@ -571,27 +571,27 @@ export function animatePerson(root, dt, speed, sprinting, distressed = false, fr
   }
 
   const moving = speed > 0.15;
-  const cadence = distressed ? 18 : sprinting ? 14 : 9;
+  const cadence = distressed ? 14 : sprinting ? 14 : 9;
   if (moving) root.userData.walk += dt * cadence * Math.min(1.6, speed / 4);
   else root.userData.walk *= Math.max(0, 1 - dt * 8);
 
   const phase = root.userData.walk;
-  const amp = moving ? (distressed ? 1.05 : sprinting ? 0.85 : 0.55) : 0;
+  const amp = moving ? (distressed ? 0.9 : sprinting ? 0.85 : 0.55) : 0;
 
   rig.lLeg.rotation.x = Math.sin(phase) * amp;
   rig.rLeg.rotation.x = Math.sin(phase + Math.PI) * amp;
 
   if (distressed) {
-    rig.rArm.rotation.x = -1.6 + Math.sin(phase * 3.1) * 0.9;
-    rig.lArm.rotation.x = -1.4 + Math.sin(phase * 2.7 + 1.2) * 0.9;
-    rig.rArm.rotation.z = 0.55 + Math.sin(phase * 2.2) * 0.45;
-    rig.lArm.rotation.z = -0.55 + Math.sin(phase * 2.4 + 0.8) * 0.45;
-    if (rig.rElbow) rig.rElbow.rotation.x = -0.6 + Math.sin(phase * 2.5) * 0.4;
-    if (rig.lElbow) rig.lElbow.rotation.x = -0.6 + Math.sin(phase * 2.1) * 0.4;
-    if (rig.head) rig.head.rotation.y = Math.sin(phase * 2.8) * 0.45;
-    if (rig.head) rig.head.rotation.x = Math.sin(phase * 3.5) * 0.2;
-    rig.torso.rotation.y = Math.sin(phase * 1.6) * 0.22;
-    rig.torso.position.y = baseY + Math.abs(Math.sin(phase * 2)) * 0.08;
+    rig.rArm.rotation.x = -1.6 + Math.sin(phase * 2.4) * 0.7;
+    rig.lArm.rotation.x = -1.4 + Math.sin(phase * 2.1 + 1.2) * 0.7;
+    rig.rArm.rotation.z = 0.55 + Math.sin(phase * 1.8) * 0.35;
+    rig.lArm.rotation.z = -0.55 + Math.sin(phase * 1.9 + 0.8) * 0.35;
+    if (rig.rElbow) rig.rElbow.rotation.x = -0.6 + Math.sin(phase * 2.0) * 0.3;
+    if (rig.lElbow) rig.lElbow.rotation.x = -0.6 + Math.sin(phase * 1.7) * 0.3;
+    if (rig.head) rig.head.rotation.y = Math.sin(phase * 2.1) * 0.35;
+    if (rig.head) rig.head.rotation.x = Math.sin(phase * 2.6) * 0.15;
+    rig.torso.rotation.y = Math.sin(phase * 1.3) * 0.18;
+    rig.torso.position.y = baseY + Math.abs(Math.sin(phase * 1.6)) * 0.06;
   } else {
     if (rig.head) {
       rig.head.rotation.y = 0;
