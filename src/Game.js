@@ -89,6 +89,9 @@ const TOWER_START_COUNT = 0;
 const TOWER_SHOP_COST = 25;
 const TOWER_OWN_CAP = 6;
 const TOWER_CARRY_CAP = 1;
+/** Matches the tower base footprint; placement centers must stay ≥ 2× this apart. */
+const TOWER_FOOTPRINT = 1.15;
+const TOWER_MIN_SEP = TOWER_FOOTPRINT * 2;
 const START_GOLD = 50;
 const SIM_FAST_SCALE = 2.5;
 const ARROW_SPEED = 26;
@@ -385,8 +388,39 @@ function createArrowTowerMesh({ ghost = false } = {}) {
   g.add(bow);
   g.userData.bow = bow;
 
+  if (ghost) {
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(TOWER_FOOTPRINT * 0.55, 28),
+      makeMat(0x6b8a4a, { transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.y = 0.03;
+    g.add(pad);
+    g.userData.ghostPad = pad;
+  }
+
   return g;
 }
+
+/** Keep-out disc shown around placed towers while carrying a tower to place. */
+function createTowerKeepoutRing(radius) {
+  const g = new THREE.Group();
+  const fill = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 48),
+    makeMat(0xa03020, { transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  fill.rotation.x = -Math.PI / 2;
+  g.add(fill);
+  const rim = new THREE.Mesh(
+    new THREE.RingGeometry(radius * 0.9, radius, 48),
+    makeMat(0xd05040, { transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.02;
+  g.add(rim);
+  return g;
+}
+
 function randPick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -500,6 +534,8 @@ export class Game {
     this.towerStock = 0; // towers currently carried
     this._carryMesh = null;
     this._towerGhost = null;
+    this._towerSepGuides = [];
+    this._placeDenyFlash = 0;
     this._levelRoot = null;
     this._speechLayer = null;
     this._proj = new THREE.Vector3();
@@ -970,7 +1006,7 @@ export class Game {
 
   _prepPrompt() {
     const action = this.towerStock > 0
-      ? 'PLACE TOWER'
+      ? 'PLACE TOWER <span class="dim">· keep 2 tower-widths apart</span>'
       : (this.towers.length > 0 ? 'PICK UP TOWER' : 'BUY A TOWER');
     return `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>RMB</kbd> ${action}`;
   }
@@ -1220,6 +1256,7 @@ export class Game {
   /** Frozen sim: shop + tower place/pickup + next wave still work. */
   _updateSimPaused() {
     if (this.playerAlive) {
+      this._tickPlaceDenyFlash(1 / 60);
       this._updateTowerInteract();
       if (this._wavePhase === 'prep' && this._pressed('KeyR')) {
         this._requestNextWave();
@@ -1256,6 +1293,7 @@ export class Game {
     this._updateWaves(dt);
     if (this.playerAlive) {
       this._updatePlayer(dt);
+      this._tickPlaceDenyFlash(dt);
       this._updateTowerInteract();
     }
     this._updateTower(dt);
@@ -1467,7 +1505,38 @@ export class Game {
       this.world.remove(this._towerGhost);
       this._towerGhost = null;
     }
+    this._clearTowerSepGuides();
     this._clearTowerAggro();
+  }
+
+  _clearTowerSepGuides() {
+    for (const g of this._towerSepGuides) {
+      if (g.parent) g.parent.remove(g);
+    }
+    this._towerSepGuides.length = 0;
+  }
+
+  _syncTowerSepGuides(show) {
+    if (!show || this.towers.length === 0) {
+      for (const g of this._towerSepGuides) g.visible = false;
+      return;
+    }
+    while (this._towerSepGuides.length < this.towers.length) {
+      const ring = createTowerKeepoutRing(TOWER_MIN_SEP);
+      ring.visible = false;
+      this.world.add(ring);
+      this._towerSepGuides.push(ring);
+    }
+    for (let i = 0; i < this._towerSepGuides.length; i++) {
+      const ring = this._towerSepGuides[i];
+      if (i >= this.towers.length) {
+        ring.visible = false;
+        continue;
+      }
+      const t = this.towers[i];
+      ring.visible = true;
+      ring.position.set(t.mesh.position.x, 0.04, t.mesh.position.z);
+    }
   }
 
   _removeTower(t, { silent = false } = {}) {
@@ -1517,17 +1586,44 @@ export class Game {
     };
   }
 
-  _canPlaceTower(x, z) {
-    if (!this.level) return false;
-    if (z > this.level.waterLine - 0.3) return false;
-    if (z < this.level.breachZ + 3) return false;
-    if (Math.abs(x) > this.level.HALF - 1.5) return false;
-    if (circleHitsWall(x, z, 0.7, this.level.walls)) return false;
-    // Keep towers from stacking on each other
+  /** @returns {null|string} null if ok, else a short block reason key */
+  _towerPlaceBlockReason(x, z) {
+    if (!this.level) return 'bounds';
+    if (z > this.level.waterLine - 0.3) return 'water';
+    if (z < this.level.breachZ + 3) return 'gate';
+    if (Math.abs(x) > this.level.HALF - 1.5) return 'bounds';
+    if (circleHitsWall(x, z, 0.7, this.level.walls)) return 'wall';
     for (const t of this.towers) {
-      if (Math.hypot(t.mesh.position.x - x, t.mesh.position.z - z) < 2.2) return false;
+      if (Math.hypot(t.mesh.position.x - x, t.mesh.position.z - z) < TOWER_MIN_SEP) {
+        return 'close';
+      }
     }
-    return true;
+    return null;
+  }
+
+  _canPlaceTower(x, z) {
+    return this._towerPlaceBlockReason(x, z) == null;
+  }
+
+  _denyTowerPlace(reason) {
+    this.sfx.uiClick();
+    const msg = {
+      close: 'TOO CLOSE — KEEP TOWERS 2 WIDTHS APART',
+      water: 'CAN\'T PLACE IN THE WATER',
+      gate: 'TOO CLOSE TO THE GATE',
+      wall: 'BLOCKED BY A WALL',
+      bounds: 'OUT OF BOUNDS',
+    }[reason] || 'CAN\'T PLACE HERE';
+    this._setPrompt(msg);
+    this._placeDenyFlash = 1.1;
+  }
+
+  _tickPlaceDenyFlash(dt) {
+    if (this._placeDenyFlash <= 0) return;
+    this._placeDenyFlash = Math.max(0, this._placeDenyFlash - dt);
+    if (this._placeDenyFlash > 0) return;
+    if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
+    else this._setPrompt('');
   }
 
   _updateTowerInteract() {
@@ -1538,21 +1634,45 @@ export class Game {
       this._towerGhost.visible = true;
       this._towerGhost.position.set(p.x, 0, p.z);
       this._towerGhost.rotation.y = this.player.rotation.y;
+      const tint = ok ? 0x6b8a4a : 0xe04030;
+      const opacity = ok ? 0.42 : 0.72;
       this._towerGhost.traverse((o) => {
-        if (o.isMesh && o.material) {
-          o.material.color.setHex(ok ? 0x6b8a4a : 0xa04030);
-        }
+        if (!o.isMesh || !o.material) return;
+        o.material.color.setHex(tint);
+        if (o.material.transparent) o.material.opacity = opacity;
       });
+      const pad = this._towerGhost.userData.ghostPad;
+      if (pad?.material) {
+        pad.material.color.setHex(ok ? 0x6b8a4a : 0xe04030);
+        pad.material.opacity = ok ? 0.28 : 0.5;
+      }
+      this._syncTowerSepGuides(true);
+      // Pulse keep-out rings the ghost is currently violating
+      for (let i = 0; i < this.towers.length; i++) {
+        const ring = this._towerSepGuides[i];
+        if (!ring) continue;
+        const t = this.towers[i];
+        const tooClose = Math.hypot(t.mesh.position.x - p.x, t.mesh.position.z - p.z) < TOWER_MIN_SEP;
+        const pulse = tooClose ? 0.22 + Math.sin(this.time * 10) * 0.12 : 0.16;
+        ring.traverse((o) => {
+          if (!o.isMesh || !o.material) return;
+          if (o.geometry?.type === 'CircleGeometry') o.material.opacity = pulse;
+          else o.material.opacity = tooClose ? 0.85 : 0.55;
+          o.material.color.setHex(tooClose ? 0xff4030 : 0xd05040);
+        });
+      }
     } else if (this._towerGhost) {
       this._towerGhost.visible = false;
+      this._syncTowerSepGuides(false);
     }
 
     if (!this.input.consumeRightClick()) return;
 
     if (this.towerStock > 0) {
       const p = this._towerPlacePos();
-      if (!this._canPlaceTower(p.x, p.z)) {
-        this.sfx.uiClick();
+      const blocked = this._towerPlaceBlockReason(p.x, p.z);
+      if (blocked) {
+        this._denyTowerPlace(blocked);
         return;
       }
       const mesh = createArrowTowerMesh();

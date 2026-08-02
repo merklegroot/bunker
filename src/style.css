@@ -193,6 +193,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 #prompt.on { opacity: 1; }
 #prompt kbd { font: inherit; color: var(--ink); margin-right: 8px; }
+#prompt .dim { opacity: .55; letter-spacing: .12em; }
 
 #waveBanner {
   position: absolute;
@@ -690,8 +691,8 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #overlay.on { opacity: 1; pointer-events: auto; }
 
 .panel { text-align: center; padding: 28px 36px; max-width: 92vw; }
-.panel h1 { font-family: 'Libre Baskerville', Georgia, serif; font-size: clamp(48px, 11vw, 88px);
-  letter-spacing: .16em; line-height: .95; color: var(--ink);
+.panel h1 { font-family: 'Libre Baskerville', Georgia, serif; font-size: clamp(28px, 6.5vw, 56px);
+  letter-spacing: .08em; line-height: 1.05; color: var(--ink);
   text-shadow: 0 0 40px rgba(74,160,192,.35); }
 .panel p { margin-top: 14px; color: var(--dim); font-size: 13px; letter-spacing: .1em; max-width: 38em; margin-left: auto; margin-right: auto; }
 #finalScore { color: var(--accent); font-size: 16px; letter-spacing: .14em; margin-top: 18px; }
