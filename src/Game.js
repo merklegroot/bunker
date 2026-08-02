@@ -278,7 +278,7 @@ const INVADER_KINDS = {
     damage: 3,
     score: 80,
     gold: 30,
-    skin: 0x3a2418,
+    skin: 0x6e4a32,
   },
 };
 
@@ -303,8 +303,8 @@ function moroccoClothes(skin) {
 
 function leaderClothes(skin) {
   return {
-    skin: skin || 0x3a2418,
-    shirt: 0x141010,
+    skin: skin || 0x6e4a32,
+    shirt: 0xc2c6ca,
     pants: 0x1a221c,
     boot: 0x0c0a08,
     hair: 0x0e0a08,
