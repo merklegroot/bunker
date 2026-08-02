@@ -944,8 +944,8 @@ export class Game {
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
-    // One pack leader from wave 2 onward
-    this._leaderPending = wave >= 2;
+    // Pack leader each wave (including wave 1 for testing)
+    this._leaderPending = wave >= 1;
     this.sfx.waveStart(wave);
     this._setPrompt('');
     this._renderSimControls();
