@@ -145,6 +145,36 @@ export class Sfx {
     this._tone('triangle', 90, 0.25, { gain: 0.1, freqEnd: 35, delay: 0.04 });
   }
 
+  macheteDraw() {
+    this._noiseBurst({
+      dur: 0.1,
+      gain: 0.1,
+      filterFreq: 2200,
+      filterType: 'bandpass',
+      Q: 0.9,
+    });
+    this._tone('triangle', 380, 0.12, { gain: 0.07, freqEnd: 160, attack: 0.005, decay: 0.06 });
+  }
+
+  macheteChop() {
+    this._noiseBurst({
+      dur: 0.14,
+      gain: 0.2,
+      filterFreq: 1400,
+      filterType: 'bandpass',
+      Q: 0.7,
+    });
+    this._tone('sawtooth', 200, 0.1, { gain: 0.1, freqEnd: 70, attack: 0.002, decay: 0.05 });
+    this._tone('sine', 90, 0.22, { gain: 0.28, freqEnd: 35, attack: 0.002, decay: 0.1 });
+    this._noiseBurst({
+      dur: 0.18,
+      gain: 0.22,
+      filterFreq: 400,
+      filterType: 'lowpass',
+      delay: 0.04,
+    });
+  }
+
   enemyDie() {
     this._tone('triangle', 200, 0.2, { gain: 0.1, freqEnd: 60, attack: 0.005, decay: 0.1 });
     this._noiseBurst({

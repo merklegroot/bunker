@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Input } from './Input.js';
 import { Sfx } from './Audio.js';
 import {
-  createPerson, animatePerson, setTint, clearTint, setArmed,
+  createPerson, animatePerson, setTint, clearTint, setArmed, setMachete,
   createHealthBar, updateHealthBar, detachBodyParts,
 } from './Character.js';
 import {
@@ -57,6 +57,11 @@ const TEAR_PAIR_ALLY_RANGE = 7.5;
 const PUNCH_HUNT_CIV_RANGE = 6.5;
 const TEAR_DURATION = 1.7;
 const HOLD_DURATION = 5.5;
+const BEHEAD_PIN = 0.75;
+const BEHEAD_DRAW = 1.35;
+const BEHEAD_RAISE = 2.2;
+const BEHEAD_CHOP = 2.5;
+const BEHEAD_END = 3.15;
 /** Swim pose: nearly prone so the water plane occludes torso/hips/legs. */
 const SWIM_PITCH = 1.42;
 const SWIM_Y = -0.34;
@@ -1034,6 +1039,7 @@ export class Game {
     this._updateSpaniards(dt);
     this._updateCivilianReinforcements(dt);
     this._updateHoldings(dt);
+    this._updateBeheadings(dt);
     this._updateTearings(dt);
     this._updateFx(dt);
     this._updateSpeechBubbles();
@@ -1901,11 +1907,12 @@ export class Game {
       civTarget: null,
       civHuntCd: 0.2 + Math.random() * 0.8,
       civHuntTimer: 0,
-      civHuntMode: null, // 'punch' | 'tear'
+      civHuntMode: null, // 'punch' | 'tear' | 'behead'
       speechCd: 1.5 + Math.random() * 3,
       speechLife: 0,
       tearing: null,
       holding: null,
+      beheading: null,
       regenDelay: 0,
     });
   }
@@ -2071,14 +2078,15 @@ export class Game {
       const stunned = e.stunTimer > 0;
       const tearing = !!e.tearing;
       const holding = !!e.holding;
+      const beheading = !!e.beheading;
       const towerTarget = e.aggroTarget === 'tower'
         ? this._nearestPlacedTower(e.mesh.position.x, e.mesh.position.z)
         : null;
-      const aggressive = !downed && !stunned && !tearing && !holding && e.aggroTimer > 0
+      const aggressive = !downed && !stunned && !tearing && !holding && !beheading && e.aggroTimer > 0
         && (e.aggroTarget === 'tower' ? !!towerTarget : this.playerAlive);
 
-      if (downed || stunned || tearing || holding) {
-        // No AI — knockback only (hold/tear posing happens in dedicated updates)
+      if (downed || stunned || tearing || holding || beheading) {
+        // No AI — knockback only (hold/tear/behead posing happens in dedicated updates)
         mx = 0;
         mz = 0;
       } else if (aggressive && e.aggroTarget === 'tower' && towerTarget) {
@@ -2134,10 +2142,10 @@ export class Game {
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
           if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
         }
-      } else if (!downed && !stunned && !tearing && !holding && e.civTarget) {
-        // Divert to punch / grab a Spaniard
+      } else if (!downed && !stunned && !tearing && !holding && !beheading && e.civTarget) {
+        // Divert to punch / grab / behead a Spaniard
         const s = e.civTarget;
-        if (s.tearing || s.heldBy === e) {
+        if (s.tearing || s.heldBy === e || s.beheading) {
           mx = 0;
           mz = 0;
         } else {
@@ -2164,7 +2172,9 @@ export class Game {
 
           if (e.biteCd <= 0 && dist < punchReach) {
             e.biteCd = 0.55 + Math.random() * 0.25;
-            if (e.civHuntMode === 'punch') {
+            if (e.civHuntMode === 'behead') {
+              this._beginBehead(e, s);
+            } else if (e.civHuntMode === 'punch') {
               this._hurtSpaniard(s, e.damage, nx, nz);
               this._bloodSpray(s.mesh.position.x, s.mesh.position.z, nx, nz, { mild: true });
               this.sfx.punchHit({ hard: e.damage >= 2 });
@@ -2195,7 +2205,7 @@ export class Game {
             }
           }
         }
-      } else if (!tearing && !holding) {
+      } else if (!tearing && !holding && !beheading) {
         // March the gate, or (gates closed) idle-wander with normal civ/player aggro
         if (!downed && !stunned && e.civHuntCd <= 0 && this.spaniards.length > 0) {
           e.civHuntCd = 1.6 + Math.random() * 1.8;
@@ -2354,7 +2364,7 @@ export class Game {
           stunned ? 0 : moveSpeed,
           aggressive && moveSpeed > 3.5,
           (e.panicked && aggressive) || stunned,
-          false,
+          tearing || holding || beheading,
           e.swimming,
         );
         updateHealthBar(e.hpBar, e.hp, e.maxHp, e.mesh.rotation.y, e.mesh.rotation.x);
@@ -2470,6 +2480,7 @@ export class Game {
       tearing: null,
       heldBy: null,
       holdTimer: 0,
+      beheading: null,
       regenDelay: 0,
     };
     this.spaniards.push(s);
@@ -2487,6 +2498,10 @@ export class Game {
 
   _hurtSpaniard(s, damage, dirX = 0, dirZ = 0, opts = {}) {
     if (!s || s.hp <= 0 || s.tearing) return;
+    if (s.beheading) {
+      if (opts.fromPlayer) this._cancelBehead(s);
+      else return;
+    }
     // Being held — still take damage but no flee knockback
     const held = !!s.heldBy;
     s.hp -= damage;
@@ -2528,7 +2543,7 @@ export class Game {
   _countHuntersOn(s) {
     let n = 0;
     for (const e of this.enemies) {
-      if (e.knockdownTimer > 0 || e.tearing) continue;
+      if (e.knockdownTimer > 0 || e.tearing || e.beheading) continue;
       if (e.civTarget === s || e.holding === s) n += 1;
     }
     return n;
@@ -2537,7 +2552,7 @@ export class Game {
   _countSwarmOn(s, range) {
     let n = 0;
     for (const e of this.enemies) {
-      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing) continue;
+      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing || e.beheading) continue;
       const targeting = e.civTarget === s || e.holding === s;
       if (!targeting) continue;
       const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
@@ -2553,30 +2568,34 @@ export class Game {
     e.civHuntMode = null;
   }
 
-  /** Opportunistic civilian attack: solo punch, or a two-person tear if an ally is nearby. */
+  /** Opportunistic civilian attack: punch, behead, or a two-person tear. */
   _maybeHuntCivilian(e) {
-    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
-    // Prefer punches more often; tears need a partner and stay rarer
-    if (Math.random() < 0.62) {
+    const roll = Math.random();
+    if (roll < 0.28) {
+      this._maybeHuntBehead(e);
+      if (!e.civTarget) this._maybeHuntPunch(e);
+    } else if (roll < 0.62) {
       this._maybeHuntPunch(e);
       if (!e.civTarget) this._maybeProposeTearPair(e);
     } else {
       this._maybeProposeTearPair(e);
       if (!e.civTarget) this._maybeHuntPunch(e);
+      if (!e.civTarget) this._maybeHuntBehead(e);
     }
   }
 
   /** Solo invader peels off to punch a nearby civilian. */
   _maybeHuntPunch(e) {
-    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
     if (Math.random() > 0.48) return;
 
     let bestS = null;
     let bestD = PUNCH_HUNT_CIV_RANGE;
     for (const s of this.spaniards) {
-      if (s.hp <= 0 || s.tearing || s.heldBy) continue;
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
       if (this._countHuntersOn(s) > 0) continue;
       const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
       if (d < bestD) {
@@ -2592,15 +2611,40 @@ export class Game {
     if (Math.random() < 0.5) this._sayInvader(e, randPick(INVADER_CIV_LINES));
   }
 
+  /** Solo invader peels off to pin and behead a civilian with a machete. */
+  _maybeHuntBehead(e) {
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
+    if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
+    if (Math.random() > 0.42) return;
+
+    let bestS = null;
+    let bestD = PUNCH_HUNT_CIV_RANGE + 0.8;
+    for (const s of this.spaniards) {
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
+      if (this._countHuntersOn(s) > 0) continue;
+      const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
+      if (d < bestD) {
+        bestD = d;
+        bestS = s;
+      }
+    }
+    if (!bestS) return;
+
+    e.civTarget = bestS;
+    e.civHuntTimer = 5.5 + Math.random() * 2;
+    e.civHuntMode = 'behead';
+    if (Math.random() < 0.55) this._sayInvader(e, randPick(INVADER_CIV_LINES));
+  }
+
   /** Nearby invader + free ally sometimes agree to pull a civilian apart (exactly two). */
   _maybeProposeTearPair(e) {
-    if (!e || e.civTarget || e.holding || e.tearing || e.aggroTimer > 0) return;
+    if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
 
     let bestS = null;
     let bestD = TEAR_PAIR_CIV_RANGE;
     for (const s of this.spaniards) {
-      if (s.hp <= 0 || s.tearing || s.heldBy) continue;
+      if (s.hp <= 0 || s.tearing || s.heldBy || s.beheading) continue;
       if (this._countHuntersOn(s) > 0) continue;
       const d = Math.hypot(s.mesh.position.x - e.mesh.position.x, s.mesh.position.z - e.mesh.position.z);
       if (d < bestD) {
@@ -2613,7 +2657,7 @@ export class Game {
     let partner = null;
     let partnerScore = TEAR_PAIR_ALLY_RANGE;
     for (const o of this.enemies) {
-      if (o === e || o.civTarget || o.holding || o.tearing) continue;
+      if (o === e || o.civTarget || o.holding || o.tearing || o.beheading) continue;
       if (o.knockdownTimer > 0 || o.stunTimer > 0 || o.aggroTimer > 0) continue;
       const dAlly = Math.hypot(o.mesh.position.x - e.mesh.position.x, o.mesh.position.z - e.mesh.position.z);
       if (dAlly > TEAR_PAIR_ALLY_RANGE) continue;
@@ -2644,7 +2688,7 @@ export class Game {
 
   /** One of a designated pair pins the civilian while the partner closes in. */
   _beginHoldCivilian(holder, s) {
-    if (!holder || !s || s.tearing || s.heldBy || holder.holding || holder.tearing) return;
+    if (!holder || !s || s.tearing || s.heldBy || s.beheading || holder.holding || holder.tearing || holder.beheading) return;
     s.heldBy = holder;
     s.holdTimer = HOLD_DURATION;
     s.kbx = 0;
@@ -2697,7 +2741,7 @@ export class Game {
   _updateHoldings(dt) {
     for (let i = this.spaniards.length - 1; i >= 0; i--) {
       const s = this.spaniards[i];
-      if (!s.heldBy || s.tearing) continue;
+      if (!s.heldBy || s.tearing || s.beheading) continue;
 
       s.holdTimer = Math.max(0, s.holdTimer - dt);
       const holder = s.heldBy;
@@ -2754,10 +2798,230 @@ export class Game {
     }
   }
 
+  /** Solo pin → draw machete → chop head. */
+  _beginBehead(killer, s) {
+    if (!killer || !s || s.hp <= 0) return;
+    if (s.tearing || s.heldBy || s.beheading) return;
+    if (killer.holding || killer.tearing || killer.beheading) return;
+
+    if (s.heldBy) this._releaseHold(s);
+    this._dropExtraHunters(s, killer);
+
+    s.beheading = {
+      killer,
+      t: 0,
+      chopped: false,
+      drew: false,
+      raised: false,
+    };
+    s.kbx = 0;
+    s.kbz = 0;
+    s.fearTimer = BEHEAD_END + 1;
+    if (s.hpBar) s.hpBar.visible = false;
+
+    killer.beheading = s;
+    killer.civTarget = s;
+    killer.civHuntTimer = BEHEAD_END + 2;
+    killer.kbx = 0;
+    killer.kbz = 0;
+    setMachete(killer.mesh, false);
+
+    this._saySpaniard(s, randPick(FEAR_LINES), true);
+    this._sayInvader(killer, randPick(INVADER_CIV_LINES));
+  }
+
+  _cancelBehead(s) {
+    if (!s?.beheading) return;
+    const killer = s.beheading.killer;
+    if (killer) {
+      if (killer.beheading === s) killer.beheading = null;
+      setMachete(killer.mesh, false);
+      this._clearCivHunt(killer);
+    }
+    s.beheading = null;
+    s.mesh.rotation.x = 0;
+    s.mesh.rotation.z = 0;
+    s.mesh.position.y = 0;
+    s.fearTimer = Math.max(s.fearTimer, SPANIARD_FEAR_TIME);
+  }
+
+  _updateBeheadings(dt) {
+    for (let i = this.spaniards.length - 1; i >= 0; i--) {
+      const s = this.spaniards[i];
+      if (!s.beheading) continue;
+      const B = s.beheading;
+      const killer = B.killer;
+      const killerOk = this.enemies.includes(killer)
+        && killer.hp > 0
+        && !killer.knockdownTimer
+        && !killer.stunTimer;
+
+      if (!killerOk) {
+        this._cancelBehead(s);
+        continue;
+      }
+
+      B.t += dt;
+      const facing = killer.mesh.rotation.y;
+      const fx = Math.sin(facing);
+      const fz = Math.cos(facing);
+      const kx = killer.mesh.position.x;
+      const kz = killer.mesh.position.z;
+
+      // Pin victim face-down in front of the killer
+      s.mesh.position.x = kx + fx * 0.9;
+      s.mesh.position.z = kz + fz * 0.9;
+      s.mesh.position.y = 0.32;
+      s.mesh.rotation.y = facing;
+      s.mesh.rotation.x = Math.PI / 2;
+      s.mesh.rotation.z = Math.sin(this.time * 14) * 0.04;
+      s.kbx = 0;
+      s.kbz = 0;
+      killer.mesh.position.y = 0;
+
+      const krig = killer.mesh.userData.rig;
+      const vrig = s.mesh.userData.rig;
+      const t = B.t;
+
+      if (vrig?.lArm && vrig?.rArm) {
+        const flail = Math.sin(this.time * 16) * 0.5;
+        vrig.lArm.rotation.x = -0.3 + flail;
+        vrig.rArm.rotation.x = -0.3 - flail;
+        vrig.lArm.rotation.z = -0.55;
+        vrig.rArm.rotation.z = 0.55;
+        if (vrig.lLeg) vrig.lLeg.rotation.x = 0.35 + flail * 0.2;
+        if (vrig.rLeg) vrig.rLeg.rotation.x = 0.35 - flail * 0.2;
+      }
+
+      if (krig?.lArm && krig?.rArm) {
+        if (t < BEHEAD_PIN) {
+          // Kneel-press: both hands pinning the back
+          krig.lArm.rotation.x = -1.35;
+          krig.rArm.rotation.x = -1.25;
+          krig.lArm.rotation.z = -0.15;
+          krig.rArm.rotation.z = 0.2;
+          if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
+          if (krig.rElbow) krig.rElbow.rotation.x = -0.45;
+          if (krig.lLeg) krig.lLeg.rotation.x = 0.55;
+          if (krig.rLeg) krig.rLeg.rotation.x = -0.35;
+        } else if (t < BEHEAD_DRAW) {
+          // Left keeps pin; right draws the blade
+          if (!B.drew) {
+            B.drew = true;
+            setMachete(killer.mesh, true);
+            this.sfx.macheteDraw();
+          }
+          const u = (t - BEHEAD_PIN) / Math.max(0.001, BEHEAD_DRAW - BEHEAD_PIN);
+          krig.lArm.rotation.x = -1.35;
+          krig.lArm.rotation.z = -0.2;
+          krig.rArm.rotation.x = -0.4 - u * 0.5;
+          krig.rArm.rotation.z = 0.55 + u * 0.35;
+          krig.rArm.rotation.y = -u * 0.4;
+          if (krig.rElbow) krig.rElbow.rotation.x = -0.7 + u * 0.2;
+          if (krig.lElbow) krig.lElbow.rotation.x = -0.55;
+          if (krig.machete) krig.machete.rotation.z = -0.4 + u * 0.2;
+        } else if (t < BEHEAD_RAISE) {
+          // Raise overhead
+          if (!B.raised) {
+            B.raised = true;
+            setMachete(killer.mesh, true);
+          }
+          const u = (t - BEHEAD_DRAW) / Math.max(0.001, BEHEAD_RAISE - BEHEAD_DRAW);
+          krig.lArm.rotation.x = -1.2;
+          krig.lArm.rotation.z = -0.25;
+          krig.rArm.rotation.x = -0.9 - u * 1.5;
+          krig.rArm.rotation.z = 0.25 - u * 0.1;
+          krig.rArm.rotation.y = -0.3 + u * 0.15;
+          if (krig.rElbow) krig.rElbow.rotation.x = -0.2 - u * 0.15;
+          if (krig.lElbow) krig.lElbow.rotation.x = -0.5;
+          if (krig.machete) krig.machete.rotation.z = -0.15;
+          if (krig.head) krig.head.rotation.x = -0.1;
+        } else if (t < BEHEAD_CHOP) {
+          // Swing down
+          const u = (t - BEHEAD_RAISE) / Math.max(0.001, BEHEAD_CHOP - BEHEAD_RAISE);
+          const ease = u * u;
+          krig.lArm.rotation.x = -1.15;
+          krig.lArm.rotation.z = -0.2;
+          krig.rArm.rotation.x = -2.4 + ease * 2.6;
+          krig.rArm.rotation.z = 0.15;
+          krig.rArm.rotation.y = -0.1;
+          if (krig.rElbow) krig.rElbow.rotation.x = -0.35 + ease * 0.2;
+          if (krig.machete) krig.machete.rotation.z = -0.1 + ease * 0.5;
+        } else {
+          // Follow-through / hold after the cut
+          krig.lArm.rotation.x = -1.1;
+          krig.rArm.rotation.x = 0.35;
+          krig.rArm.rotation.z = 0.2;
+          if (krig.rElbow) krig.rElbow.rotation.x = -0.25;
+          if (krig.machete) krig.machete.rotation.z = 0.45;
+        }
+      }
+
+      if (t >= BEHEAD_CHOP && !B.chopped) {
+        B.chopped = true;
+        const hx = s.mesh.position.x;
+        const hz = s.mesh.position.z;
+        const parts = detachBodyParts(s.mesh, ['head']);
+        for (const p of parts) {
+          this._spawnGib(
+            p.mesh,
+            fx * (2.5 + Math.random() * 2) + (Math.random() - 0.5) * 1.5,
+            fz * (2.5 + Math.random() * 2) + (Math.random() - 0.5) * 1.5,
+            2.2 + Math.random() * 3,
+            2.2,
+          );
+        }
+        this._bloodBurst(hx, hz, { heavy: true });
+        this._bloodSpray(hx, hz, fx, fz, { mild: false });
+        this.sfx.macheteChop();
+        this.shake = Math.min(1.15, this.shake + 0.45);
+        if (Math.random() < 0.7) this._sayInvader(killer, randPick(INVADER_CIV_LINES));
+      }
+
+      if (s.speechCd <= 0 && t < BEHEAD_CHOP) this._saySpaniard(s, randPick(FEAR_LINES), true);
+
+      if (t >= BEHEAD_END) {
+        this._finishBehead(s);
+      }
+    }
+  }
+
+  _finishBehead(s) {
+    const idx = this.spaniards.indexOf(s);
+    if (idx < 0) return;
+    const B = s.beheading;
+    const killer = B?.killer;
+    const x = s.mesh.position.x;
+    const z = s.mesh.position.z;
+
+    if (killer) {
+      if (killer.beheading === s) killer.beheading = null;
+      setMachete(killer.mesh, false);
+      this._clearCivHunt(killer);
+      if (Math.random() < 0.5) this._sayInvader(killer, randPick(INVADER_CIV_LINES));
+    }
+    for (const e of this.enemies) {
+      if (e.civTarget === s) this._clearCivHunt(e);
+    }
+
+    s.beheading = null;
+    s.mesh.rotation.x = 0;
+    s.mesh.rotation.z = 0;
+    if (s.hpBar) s.hpBar.visible = false;
+
+    // Headless stump collapses
+    if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+    this._spawnGib(s.mesh, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2, 0.8 + Math.random(), 2.0);
+    this._bloodSpray(x, z, 0, 1, { mild: false });
+
+    if (s.bubble) s.bubble.remove();
+    this.spaniards.splice(idx, 1);
+  }
+
   _pickTearPair(s) {
     const candidates = [];
     for (const e of this.enemies) {
-      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing) continue;
+      if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing || e.beheading) continue;
       const targeting = e.civTarget === s || e.holding === s;
       if (!targeting) continue;
       const d = Math.hypot(e.mesh.position.x - s.mesh.position.x, e.mesh.position.z - s.mesh.position.z);
@@ -2787,7 +3051,7 @@ export class Game {
 
   /** Start a 1–2s lift-and-stretch pull-apart by two invaders. */
   _beginTearSpaniard(s) {
-    if (!s || s.tearing || s.hp <= 0) return;
+    if (!s || s.tearing || s.beheading || s.hp <= 0) return;
     const pair = this._pickTearPair(s);
     if (!pair) return;
     const [a, b] = pair;
@@ -3115,6 +3379,7 @@ export class Game {
 
   _killSpaniard(s, opts = {}) {
     if (s.tearing) this._cancelTear(s);
+    if (s.beheading) this._cancelBehead(s);
     if (s.heldBy) this._releaseHold(s);
     const idx = this.spaniards.indexOf(s);
     if (idx < 0) return;
@@ -3132,6 +3397,10 @@ export class Game {
       if (e.civTarget === s) this._clearCivHunt(e);
       if (e.tearing === s) e.tearing = null;
       if (e.holding === s) e.holding = null;
+      if (e.beheading === s) {
+        setMachete(e.mesh, false);
+        e.beheading = null;
+      }
     }
   }
 
@@ -3150,8 +3419,8 @@ export class Game {
 
       if (s.speechLife <= 0 && s.bubble) s.bubble.classList.remove('on');
 
-      // Being pulled apart or held — posing handled elsewhere
-      if (s.tearing || s.heldBy) {
+      // Being pulled apart, held, or executed — posing handled elsewhere
+      if (s.tearing || s.heldBy || s.beheading) {
         updateHealthBar(s.hpBar, s.hp, s.maxHp, s.mesh.rotation.y, s.mesh.rotation.x);
         continue;
       }
@@ -3385,6 +3654,7 @@ export class Game {
     const e = this.enemies[index];
     if (!e) return;
     if (e.holding) this._releaseHold(e.holding);
+    if (e.beheading) this._cancelBehead(e.beheading);
     if (e.tearing) {
       // Don't cancel mid-tear of a civilian if this invader dies — cancelTear handles pair
     }

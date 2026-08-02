@@ -35,6 +35,7 @@ export function createPerson(palette, opts = {}) {
     rLeg: null,
     gun: null,
     muzzle: null,
+    machete: null,
     armed,
     female,
   };
@@ -150,6 +151,22 @@ export function createPerson(palette, opts = {}) {
   gunRoot.add(muzzle);
   rig.muzzle = muzzle;
 
+  // Machete (hidden unless an execution sequence draws it)
+  const macheteRoot = new THREE.Group();
+  macheteRoot.position.set(0.02, -0.34, 0.04);
+  right.elbow.add(macheteRoot);
+  rig.machete = macheteRoot;
+  const mHandle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.07), mat(0x3a2818));
+  mHandle.position.set(0, 0.02, 0);
+  macheteRoot.add(mHandle);
+  const mGuard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.08), mat(0x6a6050));
+  mGuard.position.set(0, -0.08, 0);
+  macheteRoot.add(mGuard);
+  const mBlade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.58, 0.14), mat(0xb0b8c0));
+  mBlade.position.set(0.01, -0.4, 0.02);
+  macheteRoot.add(mBlade);
+  macheteRoot.visible = false;
+
   const legX = female ? 0.13 : 0.14;
   const legW = female ? 0.17 : 0.2;
   const mkLeg = (side) => {
@@ -215,6 +232,7 @@ export function setArmed(root, armed) {
   if (!rig) return;
   rig.armed = armed;
   if (rig.gun) rig.gun.visible = armed;
+  if (armed && rig.machete) rig.machete.visible = false;
   if (armed) {
     rig.rArm.rotation.x = -1.15;
     rig.rArm.rotation.z = 0;
@@ -230,6 +248,14 @@ export function setArmed(root, armed) {
     if (rig.rElbow) rig.rElbow.rotation.x = -0.45;
     if (rig.lElbow) rig.lElbow.rotation.x = -0.45;
   }
+}
+
+/** Show/hide the sidearm machete (used in execution sequences). */
+export function setMachete(root, drawn) {
+  const rig = root.userData.rig;
+  if (!rig?.machete) return;
+  rig.machete.visible = !!drawn;
+  if (drawn && rig.gun) rig.gun.visible = false;
 }
 
 export function animatePerson(root, dt, speed, sprinting, distressed = false, freezeArms = false, swimming = false) {
