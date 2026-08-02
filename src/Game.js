@@ -65,9 +65,10 @@ const TOWER_FIRE_CD = 0.9;
 const TOWER_DAMAGE = 1;
 const TOWER_HP = 28;
 const TOWER_PICKUP_RANGE = 2.4;
-const TOWER_START_COUNT = 2;
+const TOWER_START_COUNT = 0;
 const TOWER_SHOP_COST = 25;
 const TOWER_OWN_CAP = 6;
+const START_GOLD = 50;
 const ARROW_SPEED = 26;
 const ARROW_LIFE = 1.4;
 
@@ -405,9 +406,8 @@ export class Game {
     this.sfx = new Sfx();
     this.running = false;
     this.paused = false;
-    this.time = 0;
     this.score = 0;
-    this.gold = 0;
+    this.gold = START_GOLD;
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
@@ -522,8 +522,6 @@ export class Game {
       stamina: document.getElementById('stamina'),
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
-      heldWrap: document.getElementById('heldWrap'),
-      held: document.getElementById('held'),
       shop: document.getElementById('shop'),
       shopGold: document.getElementById('shopGold'),
       towerCost: document.getElementById('towerCost'),
@@ -604,7 +602,7 @@ export class Game {
     this._clearEntities();
 
     this.score = 0;
-    this.gold = 0;
+    this.gold = START_GOLD;
     this.wave = 1;
     this.hp = MAX_HP;
     this.maxHp = MAX_HP;
@@ -639,6 +637,7 @@ export class Game {
     this._civReinforceCd = 4;
     this._giveTowers(TOWER_START_COUNT);
     this._enterWavePrep(1);
+    this._setShopOpen(true);
 
     this.input.keys.clear();
     this._keysWas = new Set();
@@ -673,14 +672,13 @@ export class Game {
     this._spawnCd = 0;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
-    this._setShopOpen(true);
     this._setPrompt(this._prepPrompt());
   }
 
   _prepPrompt() {
     const action = this.towerStock > 0
       ? 'PLACE TOWER'
-      : (this.towers.length > 0 ? 'PICK UP TOWER' : 'PLACE TOWER');
+      : (this.towers.length > 0 ? 'PICK UP TOWER' : 'BUY A TOWER');
     return `<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>RMB</kbd> ${action}`;
   }
 
@@ -698,7 +696,6 @@ export class Game {
     this._waveClearDelay = 0;
     this._waveTimer = 0;
     this.sfx.waveStart(wave);
-    this._setShopOpen(false);
     this._setPrompt('');
   }
 
@@ -724,7 +721,7 @@ export class Game {
   }
 
   _buyTower() {
-    if (this._wavePhase !== 'prep' || this.paused || !this.running) return;
+    if (!this.running || this.paused || !this.playerAlive) return;
     if (this._towerOwnedCount() >= TOWER_OWN_CAP) {
       this.sfx.uiClick();
       return;
@@ -736,11 +733,10 @@ export class Game {
     this.gold -= TOWER_SHOP_COST;
     this.towerStock += 1;
     this._syncCarryMesh();
-    this._renderHeld();
     this._renderShop();
     this._renderHud();
     this.sfx.towerPickup();
-    this._setPrompt(this._prepPrompt());
+    if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
   }
 
   _setPrompt(html) {
@@ -1034,7 +1030,6 @@ export class Game {
       this._towerGhost = null;
     }
     this._clearTowerAggro();
-    this._renderHeld();
   }
 
   _removeTower(t, { silent = false } = {}) {
@@ -1057,7 +1052,6 @@ export class Game {
     this._towerGhost = createArrowTowerMesh({ ghost: true });
     this._towerGhost.visible = false;
     this.world.add(this._towerGhost);
-    this._renderHeld();
   }
 
   _syncCarryMesh() {
@@ -1072,15 +1066,6 @@ export class Game {
       this._carryMesh.visible = true;
     } else if (this._carryMesh) {
       this._carryMesh.visible = false;
-    }
-  }
-
-  _renderHeld() {
-    if (!this.el.heldWrap) return;
-    const n = this.towerStock;
-    this.el.heldWrap.classList.toggle('hidden', n <= 0);
-    if (this.el.held) {
-      this.el.held.textContent = n > 1 ? `ARROW TOWER ×${n}` : 'ARROW TOWER';
     }
   }
 
@@ -1151,7 +1136,6 @@ export class Game {
       this._syncCarryMesh();
       this.nav = buildNavGrid(this.level);
       this.sfx.towerPlace();
-      this._renderHeld();
       if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
       return;
     }
@@ -1170,7 +1154,6 @@ export class Game {
     this.towerStock += 1;
     this._syncCarryMesh();
     this.sfx.towerPickup();
-    this._renderHeld();
     if (this._wavePhase === 'prep') this._setPrompt(this._prepPrompt());
   }
 
@@ -3213,7 +3196,7 @@ export class Game {
     if (this.el.enemies) {
       this.el.enemies.textContent = String(this.enemies.length + this.boats.reduce((n, b) => n + b.passengers.length, 0));
     }
-    if (this._wavePhase === 'prep') this._renderShop();
+    if (this.running && this.playerAlive) this._renderShop();
     this._renderRadar();
   }
 

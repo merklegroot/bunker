@@ -14,37 +14,35 @@
 
   <div id="hud">
     <div id="hudTop">
-      <div id="vitals">
-        <div id="hp" aria-label="health"></div>
-        <div id="stamina" role="meter" aria-label="stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
-          <div id="staminaFill"></div>
+      <div id="hudTopRow">
+        <div id="vitals">
+          <div id="hp" aria-label="health"></div>
+          <div id="stamina" role="meter" aria-label="stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <div id="staminaFill"></div>
+          </div>
         </div>
-        <div id="heldWrap" class="hidden">
-          <span id="heldLabel">CARRYING</span>
-          <span id="held">ARROW TOWER</span>
+        <div id="meta">
+          <div id="waveWrap"><span id="waveLabel">WAVE</span><span id="wave">1</span></div>
+          <div id="enemiesWrap"><span id="enemiesLabel">INBOUND</span><span id="enemies">0</span></div>
+          <div id="breachedWrap"><span id="breachedLabel">THROUGH</span><span id="breached">0/12</span></div>
+          <div id="goldWrap"><span id="goldLabel">GOLD</span><span id="gold">0</span></div>
+          <div id="scoreWrap"><span id="scoreLabel">SCORE</span><span id="score">0</span></div>
         </div>
       </div>
-      <div id="meta">
-        <div id="waveWrap"><span id="waveLabel">WAVE</span><span id="wave">1</span></div>
-        <div id="enemiesWrap"><span id="enemiesLabel">INBOUND</span><span id="enemies">0</span></div>
-        <div id="breachedWrap"><span id="breachedLabel">THROUGH</span><span id="breached">0/12</span></div>
-        <div id="goldWrap"><span id="goldLabel">GOLD</span><span id="gold">0</span></div>
-        <div id="scoreWrap"><span id="scoreLabel">SCORE</span><span id="score">0</span></div>
+      <div id="shop" class="hidden" aria-label="shop">
+        <div class="shopHead">
+          <span class="shopTitle">SHOP</span>
+          <span class="shopGoldLabel">GOLD <b id="shopGold">0</b></span>
+        </div>
+        <button id="buyTowerBtn" type="button">
+          <span class="itemName">ARROW TOWER</span>
+          <span class="itemDesc">Place with RMB</span>
+          <span class="itemCost"><b id="towerCost">25</b> G</span>
+        </button>
+        <p class="shopHint">Buy anytime · Place with <kbd>RMB</kbd></p>
       </div>
     </div>
     <div id="prompt" aria-live="polite"></div>
-    <div id="shop" class="hidden" aria-label="shop">
-      <div class="shopHead">
-        <span class="shopTitle">SHOP</span>
-        <span class="shopGoldLabel">GOLD <b id="shopGold">0</b></span>
-      </div>
-      <button id="buyTowerBtn" type="button">
-        <span class="itemName">ARROW TOWER</span>
-        <span class="itemDesc">Place with RMB</span>
-        <span class="itemCost"><b id="towerCost">25</b> G</span>
-      </button>
-      <p class="shopHint"><kbd>R</kbd> start wave when ready</p>
-    </div>
     <div id="speechLayer" aria-live="polite"></div>
     <div id="radarWrap" aria-label="radar">
       <canvas id="radar" width="168" height="168"></canvas>
@@ -68,7 +66,7 @@
   <div id="overlay" class="on">
     <div class="panel">
       <h1 id="title">TARAJAL</h1>
-      <p id="subtitle">Place your arrow tower. Start the wave when ready. Hold the beach.</p>
+      <p id="subtitle">Buy towers with gold. Place them. Start the wave when ready.</p>
       <p id="finalScore" class="hidden"></p>
       <div id="menuActions">
         <button id="startBtn" type="button">DEFEND</button>
