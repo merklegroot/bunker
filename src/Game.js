@@ -33,6 +33,10 @@ const HP_REGEN_RATE = 0.4; // player hearts per second after delay
 const UNIT_REGEN_FRAC = 0.1;
 const VIEW_NEAR = 10;
 const VIEW_FAR = 24;
+const CAM_VIEW_H = 13.5;
+/** Ortho frustum scale: lower = zoomed in. */
+const CAM_ZOOM_MIN = 0.72;
+const CAM_ZOOM_MAX = 1.38;
 const BULLET_KNOCKBACK = 0.28;
 const BREACH_LIMIT = 12;
 const AGGRO_DURATION = 3.25;
@@ -183,6 +187,15 @@ const INVADER_BREACH_LINES = [
   'Keep going!',
 ];
 
+const LEADER_LINES = [
+  'With me!',
+  'Take the beach!',
+  'No mercy!',
+  'Forward — now!',
+  'Break them!',
+  'I lead. You follow.',
+];
+
 const SPAIN_SKINS = [0xd4b08a, 0xc4a070, 0xb89068, 0xdbc4a0];
 const SPAIN_HAIR = [0x1a120e, 0x3a2818, 0x5a3a20, 0x2a1c14, 0x6a5030];
 // No Moroccan flag greens / crimson — mostly yellow, white, blue (red rare)
@@ -257,6 +270,16 @@ const INVADER_KINDS = {
     gold: 6,
     skin: 0xc4a070,
   },
+  leader: {
+    name: 'leader',
+    hp: 26,
+    speed: 3.5,
+    radius: 0.5,
+    damage: 3,
+    score: 80,
+    gold: 30,
+    skin: 0x3a2418,
+  },
 };
 
 // Moroccan flag red / green with slight per-person variants
@@ -274,6 +297,17 @@ function moroccoClothes(skin) {
     pants,
     boot: Math.random() < 0.5 ? 0x1a1210 : 0x15100e,
     hair: randPick(MOROCCO_HAIR),
+    gun: 0x2a3038,
+  };
+}
+
+function leaderClothes(skin) {
+  return {
+    skin: skin || 0x3a2418,
+    shirt: 0x141010,
+    pants: 0x1a221c,
+    boot: 0x0c0a08,
+    hair: 0x0e0a08,
     gun: 0x2a3038,
   };
 }
@@ -504,6 +538,7 @@ export class Game {
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 160);
     this._camOffset = new THREE.Vector3(0, 18, 13);
+    this.camZoom = 1;
     this.camera.position.copy(this._camOffset);
     this.camera.lookAt(0, 0, 0);
 
@@ -909,6 +944,8 @@ export class Game {
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
+    // One pack leader from wave 2 onward
+    this._leaderPending = wave >= 2;
     this.sfx.waveStart(wave);
     this._setPrompt('');
     this._renderSimControls();
@@ -1051,8 +1088,14 @@ export class Game {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
-    const aspect = w / Math.max(1, h);
-    const viewH = 13.5;
+    this._applyCameraZoom();
+  }
+
+  _applyCameraZoom() {
+    const w = window.innerWidth;
+    const h = Math.max(1, window.innerHeight);
+    const aspect = w / h;
+    const viewH = CAM_VIEW_H * (this.camZoom || 1);
     const viewW = viewH * aspect;
     this.camera.left = -viewW / 2;
     this.camera.right = viewW / 2;
@@ -1061,9 +1104,30 @@ export class Game {
     this.camera.updateProjectionMatrix();
   }
 
+  _handleZoom() {
+    const wheel = this.input.consumeWheel?.() ?? 0;
+    let next = this.camZoom || 1;
+    if (wheel) {
+      next *= Math.exp(wheel * 0.00115);
+    }
+    // Hold = / + to zoom in, - to zoom out
+    if (this.input.keys.has('Equal') || this.input.keys.has('NumpadAdd')) {
+      next *= 0.985;
+    }
+    if (this.input.keys.has('Minus') || this.input.keys.has('NumpadSubtract')) {
+      next *= 1.015;
+    }
+    next = clamp(next, CAM_ZOOM_MIN, CAM_ZOOM_MAX);
+    if (Math.abs(next - this.camZoom) > 0.0001) {
+      this.camZoom = next;
+      this._applyCameraZoom();
+    }
+  }
+
   _frame(now) {
     const dt = Math.min(0.033, (now - this._last) / 1000);
     this._last = now;
+    this._handleZoom();
     if (this.paused) {
       this._updateCamera();
     } else if (this.running) {
@@ -1166,23 +1230,33 @@ export class Game {
   }
 
   _spawnInvasionUnit() {
+    const kind = this._takeSpawnKind();
     const boatChance = this.wave <= 2 ? 0.55 : 0.4;
-    if (Math.random() < boatChance) {
-      this._spawnBoat();
+    // Leader prefers to arrive by boat with an escort when possible
+    if (kind === 'leader' || Math.random() < boatChance) {
+      this._spawnBoat(kind === 'leader' ? { leader: true } : {});
     } else {
       const spot = randPick(this.level.swimSpawns);
       this._spawnEnemy(
         spot.x + (Math.random() - 0.5) * 2,
         spot.z + (Math.random() - 0.5),
-        pickInvaderKind(this.wave),
+        kind,
         { swimming: true },
       );
     }
   }
 
-  _spawnBoat() {
+  _takeSpawnKind() {
+    if (this._leaderPending) {
+      this._leaderPending = false;
+      return 'leader';
+    }
+    return pickInvaderKind(this.wave);
+  }
+
+  _spawnBoat(opts = {}) {
     const spot = randPick(this.level.boatSpawns);
-    const isRaft = Math.random() < 0.45;
+    const isRaft = opts.leader ? false : Math.random() < 0.45;
     const group = new THREE.Group();
     group.position.set(spot.x, 0, spot.z);
 
@@ -1202,9 +1276,12 @@ export class Game {
       group.add(prow);
     }
 
-    const capacity = isRaft ? 2 + Math.floor(Math.random() * 2) : 3 + Math.floor(Math.random() * 3);
+    const capacity = opts.leader
+      ? 3 + Math.floor(Math.random() * 2)
+      : (isRaft ? 2 + Math.floor(Math.random() * 2) : 3 + Math.floor(Math.random() * 3));
     const passengers = [];
-    for (let i = 0; i < capacity; i++) {
+    if (opts.leader) passengers.push('leader');
+    while (passengers.length < capacity) {
       passengers.push(pickInvaderKind(this.wave));
     }
 
@@ -1946,17 +2023,26 @@ export class Game {
     x = this._pos.x;
     z = this._pos.z;
 
-    const mesh = createPerson(moroccoClothes(def.skin), { armed: false, female: false });
+    const isLeader = kindKey === 'leader';
+    const clothes = isLeader ? leaderClothes(def.skin) : moroccoClothes(def.skin);
+    const mesh = createPerson(clothes, {
+      armed: false,
+      female: false,
+      muscular: isLeader,
+      bald: isLeader,
+    });
     setArmed(mesh, false);
+    if (isLeader) setMachete(mesh, true);
     mesh.position.set(x, 0, z);
     if (kindKey === 'sprinter') mesh.scale.set(0.85, 0.9, 0.85);
     if (kindKey === 'sturdy') mesh.scale.setScalar(1.15);
+    // Leader scale is baked into createPerson(muscular)
     if (opts.swimming) {
       mesh.position.y = SWIM_Y;
       mesh.rotation.x = SWIM_PITCH;
     }
 
-    const hpBar = createHealthBar();
+    const hpBar = createHealthBar({ y: isLeader ? 2.55 : 2.15 });
     mesh.add(hpBar);
     this.world.add(mesh);
 
@@ -1974,10 +2060,10 @@ export class Game {
       hpBar,
       bubble,
       kind: kindKey,
-      r: def.radius * (kindKey === 'sturdy' ? 1.1 : 1),
+      r: def.radius * (kindKey === 'sturdy' ? 1.1 : isLeader ? 1.15 : 1),
       hp: Math.round(def.hp * waveScale),
       maxHp: Math.round(def.hp * waveScale),
-      speed: def.speed + Math.random() * 0.35,
+      speed: def.speed + Math.random() * (isLeader ? 0.15 : 0.35),
       damage: def.damage,
       score: def.score + this.wave * 2,
       gold: def.gold + Math.floor(this.wave * 0.5),
@@ -2003,7 +2089,17 @@ export class Game {
       holding: null,
       beheading: null,
       regenDelay: 0,
+      // Leader: war-cry rally + machete charge
+      rallyCd: isLeader ? 2.5 + Math.random() * 2 : 0,
+      chargeCd: isLeader ? 3 + Math.random() * 2 : 0,
+      charging: false,
+      chargeT: 0,
+      speedBoostT: 0,
     });
+    if (isLeader) {
+      this._sayInvader(this.enemies[this.enemies.length - 1], randPick(LEADER_LINES));
+      this._setPrompt('THEIR LEADER HAS LANDED');
+    }
   }
 
   _sayInvader(e, text) {
@@ -2160,6 +2256,11 @@ export class Game {
         if (e.mesh.userData.rig?.torso) e.mesh.userData.rig.torso.rotation.x = 0;
       }
 
+      e.speedBoostT = Math.max(0, (e.speedBoostT || 0) - dt);
+      if (e.kind === 'leader') {
+        this._updateLeader(e, dt, px, pz);
+      }
+
       let mx = 0;
       let mz = 0;
       let moveSpeed = 0;
@@ -2178,6 +2279,31 @@ export class Game {
         // No AI — knockback only (hold/tear/behead posing happens in dedicated updates)
         mx = 0;
         mz = 0;
+        if (e.charging) {
+          e.charging = false;
+          e.chargeT = 0;
+        }
+      } else if (e.charging && this.playerAlive) {
+        // Leader machete charge — straight rush, heavy hit on contact
+        const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z) || 1;
+        const steer = this._steer(e, px, pz);
+        mx = steer.x || (px - e.mesh.position.x) / dist;
+        mz = steer.z || (pz - e.mesh.position.z) / dist;
+        e.mesh.rotation.y = Math.atan2(mx, mz);
+        const punchReach = e.r + PLAYER_RADIUS + 0.55;
+        if (dist < punchReach) {
+          const nx = (px - e.mesh.position.x) / dist;
+          const nz = (pz - e.mesh.position.z) / dist;
+          this._hurt(e.damage + 1, nx, nz);
+          this.kbx = nx * PLAYER_KNOCK_SPEED * 1.6;
+          this.kbz = nz * PLAYER_KNOCK_SPEED * 1.6;
+          this._spark(px, pz, COL.blood, 10, 0.35, 1.15);
+          this.sfx.punchHit({ hard: true });
+          this._sayInvader(e, randPick(LEADER_LINES));
+          e.charging = false;
+          e.chargeT = 0;
+          e.biteCd = 0.9;
+        }
       } else if (aggressive && e.aggroTarget === 'tower' && towerTarget) {
         const tx = towerTarget.mesh.position.x;
         const tz = towerTarget.mesh.position.z;
@@ -2229,7 +2355,9 @@ export class Game {
           e.biteCd = 0.85 + Math.random() * 0.35;
           this._hurt(e.damage, nx, nz);
           this._spark(px, pz, COL.blood, 6, 0.28, 1.0);
-          if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
+          if (Math.random() < 0.4) {
+            this._sayInvader(e, randPick(e.kind === 'leader' ? LEADER_LINES : INVADER_FIGHT_LINES));
+          }
         }
       } else if (!downed && !stunned && !tearing && !holding && !beheading && e.civTarget) {
         // Divert to punch / grab / behead a Spaniard
@@ -2403,7 +2531,10 @@ export class Game {
         mz /= mLen;
         const swimSlow = e.swimming ? 0.55 : 1;
         const hunting = !!e.civTarget && e.aggroTimer <= 0;
-        moveSpeed = (aggressive ? e.speed * 1.15 : hunting ? e.speed * 1.25 : e.speed) * swimSlow;
+        let spd = aggressive ? e.speed * 1.15 : hunting ? e.speed * 1.25 : e.speed;
+        if (e.charging) spd = e.speed * 2.35;
+        else if (e.speedBoostT > 0) spd *= 1.35;
+        moveSpeed = spd * swimSlow;
         e.mesh.position.x += mx * moveSpeed * dt * control;
         e.mesh.position.z += mz * moveSpeed * dt * control;
       }
@@ -2677,6 +2808,12 @@ export class Game {
     if (!e || e.civTarget || e.holding || e.tearing || e.beheading || e.aggroTimer > 0) return;
     if (e.knockdownTimer > 0 || e.stunTimer > 0) return;
 
+    // Pack leader almost always tries an execution first
+    if (e.kind === 'leader' && this._atkEnabled('behead')) {
+      this._maybeHuntBehead(e);
+      if (e.civTarget) return;
+    }
+
     const tries = [];
     if (this._atkEnabled('behead')) tries.push(() => this._maybeHuntBehead(e));
     if (this._atkEnabled('punch')) tries.push(() => this._maybeHuntPunch(e));
@@ -2690,6 +2827,68 @@ export class Game {
     for (const tryHunt of tries) {
       tryHunt();
       if (e.civTarget) return;
+    }
+  }
+
+  _updateLeader(e, dt, px, pz) {
+    if (!e || e.kind !== 'leader') return;
+    e.rallyCd = Math.max(0, (e.rallyCd || 0) - dt);
+    e.chargeCd = Math.max(0, (e.chargeCd || 0) - dt);
+    if (e.charging) {
+      e.chargeT = Math.max(0, (e.chargeT || 0) - dt);
+      if (e.chargeT <= 0) e.charging = false;
+    }
+
+    // Keep the machete drawn when not mid-execution
+    if (!e.beheading && !e.tearing && !e.holding) {
+      setMachete(e.mesh, true);
+    }
+
+    if (e.knockdownTimer > 0 || e.stunTimer > 0 || e.tearing || e.holding || e.beheading) {
+      e.charging = false;
+      return;
+    }
+
+    // War cry — whip nearby invaders into a frenzy
+    if (e.rallyCd <= 0) {
+      e.rallyCd = 7.5 + Math.random() * 3.5;
+      this._leaderRally(e);
+    }
+
+    // Machete charge at the player when already fighting
+    if (
+      !e.charging
+      && e.chargeCd <= 0
+      && e.aggroTimer > 0
+      && e.aggroTarget !== 'tower'
+      && this.playerAlive
+    ) {
+      const dist = Math.hypot(px - e.mesh.position.x, pz - e.mesh.position.z);
+      if (dist > 3.2 && dist < 10.5) {
+        e.charging = true;
+        e.chargeT = 0.9;
+        e.chargeCd = 5.5 + Math.random() * 2;
+        this._sayInvader(e, randPick(LEADER_LINES));
+        this.sfx.macheteDraw();
+      }
+    }
+  }
+
+  _leaderRally(leader) {
+    if (!leader) return;
+    this._sayInvader(leader, randPick(LEADER_LINES));
+    this._spark(leader.mesh.position.x, leader.mesh.position.z, 0xc1272d, 8, 0.4, 1.1);
+    this.shake = Math.min(0.55, this.shake + 0.12);
+    for (const o of this.enemies) {
+      if (o === leader || o.knockdownTimer > 0 || o.hp <= 0) continue;
+      const d = Math.hypot(
+        o.mesh.position.x - leader.mesh.position.x,
+        o.mesh.position.z - leader.mesh.position.z,
+      );
+      if (d > 10) continue;
+      this._enrage(o, AGGRO_DURATION * 1.15, o.aggroTarget === 'tower' ? 'tower' : 'player');
+      o.speedBoostT = Math.max(o.speedBoostT || 0, 3.8);
+      o.panicked = true;
     }
   }
 
@@ -2948,7 +3147,7 @@ export class Game {
     const killer = s.beheading.killer;
     if (killer) {
       if (killer.beheading === s) killer.beheading = null;
-      setMachete(killer.mesh, false);
+      setMachete(killer.mesh, killer.kind === 'leader');
       this._clearCivHunt(killer);
     }
     s.beheading = null;
@@ -3181,7 +3380,7 @@ export class Game {
 
     if (killer) {
       if (killer.beheading === s) killer.beheading = null;
-      setMachete(killer.mesh, false);
+      setMachete(killer.mesh, killer.kind === 'leader');
       this._clearCivHunt(killer);
       if (Math.random() < 0.5) this._sayInvader(killer, randPick(INVADER_CIV_LINES));
     }
@@ -3584,7 +3783,7 @@ export class Game {
       if (e.tearing === s) e.tearing = null;
       if (e.holding === s) e.holding = null;
       if (e.beheading === s) {
-        setMachete(e.mesh, false);
+        setMachete(e.mesh, e.kind === 'leader');
         e.beheading = null;
       }
     }
@@ -4066,7 +4265,7 @@ export class Game {
       const y = toY(e.mesh.position.z);
       ctx.fillStyle = e.aggroTimer > 0 || e.civTarget ? '#e05040' : '#c04038';
       ctx.beginPath();
-      ctx.arc(x, y, e.kind === 'sturdy' ? 3.2 : 2.4, 0, Math.PI * 2);
+      ctx.arc(x, y, e.kind === 'leader' ? 4 : e.kind === 'sturdy' ? 3.2 : 2.4, 0, Math.PI * 2);
       ctx.fill();
     }
 

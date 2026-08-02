@@ -8,10 +8,14 @@ function mat(color) {
  * Low-poly person: head, torso, arms, legs, optional rifle.
  * Facing +Z locally after yaw (muzzle aims along -Z of gun, person faces +Z via rotation).
  * opts.female — softer proportions + longer hair (civilians).
+ * opts.muscular — broader chest, thicker limbs (leader).
+ * opts.bald — no hair cap / back hair (skin all around the head).
  */
 export function createPerson(palette, opts = {}) {
   const armed = opts.armed !== false;
   const female = !!opts.female;
+  const muscular = !!opts.muscular && !female;
+  const bald = !!opts.bald;
   const {
     skin = 0xd4a574,
     shirt = 0x3dffb5,
@@ -38,10 +42,12 @@ export function createPerson(palette, opts = {}) {
     machete: null,
     armed,
     female,
+    muscular,
+    bald,
   };
 
   const torso = new THREE.Group();
-  torso.position.y = 0.95;
+  torso.position.y = muscular ? 1.02 : 0.95;
   root.add(torso);
   rig.torso = torso;
 
@@ -56,6 +62,16 @@ export function createPerson(palette, opts = {}) {
     const hips = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.32, 0.32), mat(pants));
     hips.position.y = -0.24;
     torso.add(hips);
+  } else if (muscular) {
+    const traps = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.28, 0.38), mat(shirt));
+    traps.position.y = 0.48;
+    torso.add(traps);
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.55, 0.4), mat(shirt));
+    chest.position.y = 0.12;
+    torso.add(chest);
+    const abs = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.32, 0.3), mat(skin));
+    abs.position.y = -0.22;
+    torso.add(abs);
   } else {
     const chest = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.32), mat(shirt));
     chest.position.y = 0.2;
@@ -63,23 +79,29 @@ export function createPerson(palette, opts = {}) {
   }
 
   const head = new THREE.Group();
-  head.position.y = female ? 0.64 : 0.72;
+  head.position.y = female ? 0.64 : muscular ? 0.78 : 0.72;
   torso.add(head);
   rig.head = head;
   // Face order: +x,-x,+y,-y,+z,-z — person faces +Z, so -Z is the back of the head
   const skinMat = mat(skin);
   const hairMat = mat(hair);
-  const headSize = female ? 0.31 : 0.34;
+  const headSize = female ? 0.31 : muscular ? 0.38 : 0.34;
+  const headH = female ? 0.33 : muscular ? 0.4 : 0.36;
+  const headMats = bald
+    ? [skinMat, skinMat, skinMat, skinMat, skinMat, skinMat]
+    : [skinMat, skinMat, skinMat, skinMat, skinMat, hairMat];
   head.add(new THREE.Mesh(
-    new THREE.BoxGeometry(headSize, female ? 0.33 : 0.36, headSize),
-    [skinMat, skinMat, skinMat, skinMat, skinMat, hairMat],
+    new THREE.BoxGeometry(headSize, headH, headSize),
+    headMats,
   ));
-  const hairTop = new THREE.Mesh(
-    new THREE.BoxGeometry(female ? 0.33 : 0.36, female ? 0.12 : 0.14, female ? 0.33 : 0.36),
-    hairMat,
-  );
-  hairTop.position.y = female ? 0.17 : 0.2;
-  head.add(hairTop);
+  if (!bald) {
+    const hairTop = new THREE.Mesh(
+      new THREE.BoxGeometry(female ? 0.33 : 0.36, female ? 0.12 : 0.14, female ? 0.33 : 0.36),
+      hairMat,
+    );
+    hairTop.position.y = female ? 0.17 : 0.2;
+    head.add(hairTop);
+  }
 
   if (female) {
     // Long hair down the back and over the shoulders
@@ -98,30 +120,40 @@ export function createPerson(palette, opts = {}) {
     head.add(hairTail);
   }
 
-  const shoulderX = female ? 0.26 : 0.34;
-  const armW = female ? 0.12 : 0.16;
+  const shoulderX = female ? 0.26 : muscular ? 0.44 : 0.34;
+  const armW = female ? 0.12 : muscular ? 0.22 : 0.16;
   const mkArm = (side) => {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * shoulderX, female ? 0.4 : 0.48, 0);
+    shoulder.position.set(side * shoulderX, female ? 0.4 : muscular ? 0.52 : 0.48, 0);
     torso.add(shoulder);
 
-    const upper = new THREE.Mesh(new THREE.BoxGeometry(armW, female ? 0.3 : 0.36, armW), mat(shirt));
-    upper.position.y = female ? -0.15 : -0.18;
+    const upper = new THREE.Mesh(
+      new THREE.BoxGeometry(armW, female ? 0.3 : muscular ? 0.4 : 0.36, armW),
+      mat(shirt),
+    );
+    upper.position.y = female ? -0.15 : muscular ? -0.2 : -0.18;
     shoulder.add(upper);
 
     const elbow = new THREE.Group();
-    elbow.position.y = female ? -0.3 : -0.36;
+    elbow.position.y = female ? -0.3 : muscular ? -0.4 : -0.36;
     shoulder.add(elbow);
 
-    const forearm = new THREE.Mesh(new THREE.BoxGeometry(armW * 0.9, female ? 0.26 : 0.32, armW * 0.9), mat(shirt));
-    forearm.position.y = female ? -0.13 : -0.16;
+    const forearm = new THREE.Mesh(
+      new THREE.BoxGeometry(armW * 0.92, female ? 0.26 : muscular ? 0.34 : 0.32, armW * 0.92),
+      mat(shirt),
+    );
+    forearm.position.y = female ? -0.13 : muscular ? -0.17 : -0.16;
     elbow.add(forearm);
 
     const hand = new THREE.Mesh(
-      new THREE.BoxGeometry(female ? 0.11 : 0.15, female ? 0.11 : 0.15, female ? 0.11 : 0.15),
+      new THREE.BoxGeometry(
+        female ? 0.11 : muscular ? 0.18 : 0.15,
+        female ? 0.11 : muscular ? 0.18 : 0.15,
+        female ? 0.11 : muscular ? 0.18 : 0.15,
+      ),
       mat(skin),
     );
-    hand.position.y = female ? -0.3 : -0.36;
+    hand.position.y = female ? -0.3 : muscular ? -0.38 : -0.36;
     elbow.add(hand);
 
     // Default slight bend so arms don't look locked
@@ -153,7 +185,7 @@ export function createPerson(palette, opts = {}) {
 
   // Machete (hidden unless an execution sequence draws it)
   const macheteRoot = new THREE.Group();
-  macheteRoot.position.set(0.02, -0.34, 0.04);
+  macheteRoot.position.set(0.02, muscular ? -0.38 : -0.34, 0.04);
   right.elbow.add(macheteRoot);
   rig.machete = macheteRoot;
   const mHandle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.07), mat(0x3a2818));
@@ -162,41 +194,56 @@ export function createPerson(palette, opts = {}) {
   const mGuard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.08), mat(0x6a6050));
   mGuard.position.set(0, -0.08, 0);
   macheteRoot.add(mGuard);
-  const mBlade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.58, 0.14), mat(0xb0b8c0));
-  mBlade.position.set(0.01, -0.4, 0.02);
+  const mBlade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, muscular ? 0.68 : 0.58, muscular ? 0.16 : 0.14),
+    mat(0xb0b8c0),
+  );
+  mBlade.position.set(0.01, muscular ? -0.46 : -0.4, 0.02);
   macheteRoot.add(mBlade);
   const macheteTip = new THREE.Object3D();
   // Tip of the blade (along local -Y from the handle)
-  macheteTip.position.set(0.01, -0.72, 0.02);
+  macheteTip.position.set(0.01, muscular ? -0.82 : -0.72, 0.02);
   macheteRoot.add(macheteTip);
   rig.macheteTip = macheteTip;
   macheteRoot.visible = false;
 
-  const legX = female ? 0.13 : 0.14;
-  const legW = female ? 0.17 : 0.2;
+  const legX = female ? 0.13 : muscular ? 0.18 : 0.14;
+  const legW = female ? 0.17 : muscular ? 0.26 : 0.2;
   const mkLeg = (side) => {
     const pivot = new THREE.Group();
-    pivot.position.set(side * legX, 0.95, 0);
+    pivot.position.set(side * legX, muscular ? 1.02 : 0.95, 0);
     root.add(pivot);
     // Thighs a touch fuller under wider hips
     const thigh = new THREE.Mesh(
-      new THREE.BoxGeometry(female ? 0.19 : legW, female ? 0.44 : 0.5, female ? 0.2 : 0.22),
+      new THREE.BoxGeometry(
+        female ? 0.19 : muscular ? 0.28 : legW,
+        female ? 0.44 : muscular ? 0.52 : 0.5,
+        female ? 0.2 : muscular ? 0.28 : 0.22,
+      ),
       mat(pants),
     );
-    thigh.position.y = female ? -0.22 : -0.25;
+    thigh.position.y = female ? -0.22 : muscular ? -0.26 : -0.25;
     pivot.add(thigh);
     const shin = new THREE.Mesh(
-      new THREE.BoxGeometry(female ? 0.15 : legW * 0.9, female ? 0.4 : 0.45, female ? 0.16 : 0.2),
+      new THREE.BoxGeometry(
+        female ? 0.15 : muscular ? 0.22 : legW * 0.9,
+        female ? 0.4 : muscular ? 0.48 : 0.45,
+        female ? 0.16 : muscular ? 0.24 : 0.2,
+      ),
       mat(pants),
     );
-    shin.position.y = female ? -0.62 : -0.68;
+    shin.position.y = female ? -0.62 : muscular ? -0.72 : -0.68;
     pivot.add(shin);
     const foot = new THREE.Mesh(
-      new THREE.BoxGeometry(female ? 0.15 : 0.2, 0.1, female ? 0.26 : 0.32),
+      new THREE.BoxGeometry(
+        female ? 0.15 : muscular ? 0.24 : 0.2,
+        0.1,
+        female ? 0.26 : muscular ? 0.36 : 0.32,
+      ),
       mat(boot),
     );
     // Character faces +Z — toes point forward
-    foot.position.set(0, female ? -0.84 : -0.92, female ? 0.08 : 0.1);
+    foot.position.set(0, female ? -0.84 : muscular ? -0.98 : -0.92, female ? 0.08 : 0.1);
     pivot.add(foot);
     return pivot;
   };
@@ -205,10 +252,12 @@ export function createPerson(palette, opts = {}) {
 
   if (female) {
     root.scale.set(0.93, 0.95, 0.93);
+  } else if (muscular) {
+    root.scale.set(1.18, 1.22, 1.18);
   }
 
   const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(female ? 0.36 : 0.42, 16),
+    new THREE.CircleGeometry(female ? 0.36 : muscular ? 0.55 : 0.42, 16),
     new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,

@@ -8,6 +8,7 @@ export class Input {
       right: false,
       rightClicked: false,
     };
+    this.wheelDelta = 0;
     this._ndc = { x: 0, y: 0 };
 
     window.addEventListener('keydown', (e) => {
@@ -43,6 +44,10 @@ export class Input {
     });
     canvas.addEventListener('pointermove', (e) => this._track(e, canvas));
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.wheelDelta += e.deltaY;
+    }, { passive: false });
   }
 
   _track(e, canvas) {
@@ -57,6 +62,12 @@ export class Input {
     if (!this.mouse.rightClicked) return false;
     this.mouse.rightClicked = false;
     return true;
+  }
+
+  consumeWheel() {
+    const d = this.wheelDelta;
+    this.wheelDelta = 0;
+    return d;
   }
 
   axis() {
