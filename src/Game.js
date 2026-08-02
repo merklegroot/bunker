@@ -343,51 +343,183 @@ function makeMat(color, opts = {}) {
   return new THREE.MeshBasicMaterial({ color, ...opts });
 }
 
-/** Small wooden archery platform with a bow mount. */
+/** Wooden beach watchtower with a mounted bow. */
 function createArrowTowerMesh({ ghost = false } = {}) {
-  const opacity = ghost ? 0.4 : 1;
+  const opacity = ghost ? 0.42 : 1;
   const mat = (c) => makeMat(c, ghost
     ? { transparent: true, opacity, depthWrite: false }
     : {});
   const g = new THREE.Group();
-  const wood = mat(0x6b4a2a);
+  const wood = mat(0x7a5530);
+  const woodLight = mat(0x9a7048);
   const dark = mat(0x3d2918);
   const iron = mat(0x5a6068);
+  const rope = mat(0xc4a878);
+  const cloth = mat(0x8a3030);
 
-  const base = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.28, 1.15), wood);
-  base.position.y = 0.14;
+  // —— Foundation ——
+  const footing = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.16, 1.35), mat(0x5a5448));
+  footing.position.y = 0.08;
+  g.add(footing);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.22, 1.2), wood);
+  base.position.y = 0.27;
   g.add(base);
 
-  for (const [x, z] of [[-0.38, -0.38], [0.38, -0.38], [-0.38, 0.38], [0.38, 0.38]]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.7, 0.14), dark);
-    post.position.set(x, 0.95, z);
-    g.add(post);
+  // Sandbags around the base
+  for (const [x, z, ry] of [
+    [-0.55, 0.35, 0.2], [0.55, 0.3, -0.15], [-0.4, -0.5, 0.5], [0.45, -0.45, -0.4],
+  ]) {
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.28), mat(0x8a8060));
+    bag.position.set(x, 0.22, z);
+    bag.rotation.y = ry;
+    g.add(bag);
   }
 
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.12, 1.05), wood);
-  deck.position.y = 1.72;
+  // —— Legs + cross braces ——
+  const posts = [[-0.42, -0.42], [0.42, -0.42], [-0.42, 0.42], [0.42, 0.42]];
+  for (const [x, z] of posts) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.55, 0.13), dark);
+    post.position.set(x, 1.05, z);
+    g.add(post);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.18), iron);
+    cap.position.set(x, 1.85, z);
+    g.add(cap);
+  }
+
+  // X-braces on each face
+  const braceFaces = [
+    { ax: -0.42, az: -0.42, bx: 0.42, bz: -0.42 },
+    { ax: -0.42, az: 0.42, bx: 0.42, bz: 0.42 },
+    { ax: -0.42, az: -0.42, bx: -0.42, bz: 0.42 },
+    { ax: 0.42, az: -0.42, bx: 0.42, bz: 0.42 },
+  ];
+  for (const f of braceFaces) {
+    const dx = f.bx - f.ax;
+    const dz = f.bz - f.az;
+    const len = Math.hypot(dx, dz) || 1;
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(len * 0.95, 0.06, 0.06), woodLight);
+    brace.position.set((f.ax + f.bx) * 0.5, 1.05, (f.az + f.bz) * 0.5);
+    brace.rotation.y = Math.atan2(dx, dz);
+    brace.rotation.z = 0.55;
+    g.add(brace);
+    const brace2 = brace.clone();
+    brace2.rotation.z = -0.55;
+    g.add(brace2);
+  }
+
+  // Mid ring beam
+  for (const [w, d, x, z] of [
+    [1.0, 0.08, 0, -0.42], [1.0, 0.08, 0, 0.42],
+    [0.08, 1.0, -0.42, 0], [0.08, 1.0, 0.42, 0],
+  ]) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(w, 0.1, d), dark);
+    beam.position.set(x, 1.15, z);
+    g.add(beam);
+  }
+
+  // —— Deck (plank look) ——
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.1, 1.15), wood);
+  deck.position.y = 1.82;
   g.add(deck);
+  for (let i = -2; i <= 2; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.02, 0.18), woodLight);
+    plank.position.set(0, 1.88, i * 0.22);
+    g.add(plank);
+  }
 
-  const railN = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.22, 0.08), dark);
-  railN.position.set(0, 1.9, -0.48);
-  g.add(railN);
-  const railS = railN.clone();
-  railS.position.z = 0.48;
-  g.add(railS);
+  // Full railing
+  for (const [x, z, w, d] of [
+    [0, -0.52, 1.15, 0.07], [0, 0.52, 1.15, 0.07],
+    [-0.52, 0, 0.07, 1.15], [0.52, 0, 0.07, 1.15],
+  ]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(w, 0.28, d), dark);
+    rail.position.set(x, 2.05, z);
+    g.add(rail);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(w * 1.02, 0.06, d * 1.02), woodLight);
+    top.position.set(x, 2.22, z);
+    g.add(top);
+  }
+  // Corner uprights on rail
+  for (const [x, z] of posts) {
+    const up = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.4, 0.08), dark);
+    up.position.set(x * 1.15, 2.1, z * 1.15);
+    g.add(up);
+  }
 
-  const mount = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.32), iron);
-  mount.position.y = 1.92;
-  g.add(mount);
+  // Ladder on the -Z face
+  for (let i = 0; i < 5; i++) {
+    const rung = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.06), woodLight);
+    rung.position.set(0, 0.45 + i * 0.28, -0.58);
+    g.add(rung);
+  }
+  for (const sx of [-0.22, 0.22]) {
+    const side = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.45, 0.06), dark);
+    side.position.set(sx, 1.0, -0.58);
+    g.add(side);
+  }
 
+  // Small canvas shade
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.04, 0.7), cloth);
+  canopy.position.set(0, 2.72, 0.05);
+  canopy.rotation.x = -0.12;
+  g.add(canopy);
+  for (const [x, z] of [[-0.4, -0.25], [0.4, -0.25], [-0.4, 0.35], [0.4, 0.35]]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.85, 5), dark);
+    pole.position.set(x, 2.35, z);
+    g.add(pole);
+  }
+
+  // —— Bow mount (kept as userData.bow for aim checks) ——
   const bow = new THREE.Group();
-  bow.position.y = 2.1;
-  const limb = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.07, 0.07), dark);
-  bow.add(limb);
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.4), dark);
-  stock.position.z = 0.12;
-  bow.add(stock);
+  bow.position.set(0, 2.15, 0);
+
+  const mount = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.18, 0.36), iron);
+  mount.position.y = -0.08;
+  bow.add(mount);
+  const pivot = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.2, 6), iron);
+  pivot.position.y = 0.05;
+  bow.add(pivot);
+
+  // Curved limb from segments
+  const limbMat = dark;
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const t = i / 3;
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.07, 0.07), limbMat);
+      const bend = t * t * 0.28;
+      seg.position.set(side * (0.12 + t * 0.38), bend, -0.02);
+      seg.rotation.z = side * (-0.15 - t * 0.55);
+      bow.add(seg);
+    }
+  }
+  // Grip / stock
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.38), wood);
+  grip.position.set(0, 0.02, 0.12);
+  bow.add(grip);
+  // Bowstring
+  const string = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.015, 0.015), rope);
+  string.position.set(0, 0.22, -0.08);
+  bow.add(string);
+  // Nocked arrow on the rest
+  const arrow = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.7), mat(0xc4a060));
+  arrow.position.set(0, 0.06, 0.2);
+  bow.add(arrow);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 5), iron);
+  tip.rotation.x = Math.PI / 2;
+  tip.position.set(0, 0.06, 0.58);
+  bow.add(tip);
+
   g.add(bow);
   g.userData.bow = bow;
+
+  // Tiny pennant
+  const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.7, 5), dark);
+  staff.position.set(0.48, 2.55, -0.48);
+  g.add(staff);
+  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.22, 0.02), cloth);
+  flag.position.set(0.62, 2.8, -0.48);
+  g.add(flag);
 
   if (ghost) {
     const pad = new THREE.Mesh(
@@ -1712,7 +1844,7 @@ export class Game {
       mesh.position.set(p.x, 0, p.z);
       mesh.rotation.y = this.player.rotation.y;
       this.world.add(mesh);
-      const hpBar = createHealthBar({ y: 2.55 });
+      const hpBar = createHealthBar({ y: 3.05 });
       mesh.add(hpBar);
       const w = wall(p.x, p.z, 1.05, 1.05, 1.9);
       w._tower = true;
