@@ -11,6 +11,9 @@ import {
   buildNavGrid,
   resolveCircle,
   hasLineOfSight,
+  circleHitsWall,
+  segmentHitsWall,
+  wall,
   steerTo,
 } from './Level.js';
 
@@ -57,6 +60,13 @@ const SWIM_Y = -0.34;
 const CIV_TARGET_COUNT = 9;
 const CIV_REINFORCE_MIN = 2.4;
 const CIV_REINFORCE_MAX = 5.0;
+const TOWER_RANGE = 13;
+const TOWER_FIRE_CD = 0.9;
+const TOWER_DAMAGE = 1;
+const TOWER_HP = 28;
+const TOWER_PICKUP_RANGE = 2.4;
+const ARROW_SPEED = 26;
+const ARROW_LIFE = 1.4;
 
 const WELCOME_LINES = [
   // Spanish
@@ -269,6 +279,55 @@ function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function makeMat(color, opts = {}) {
   return new THREE.MeshBasicMaterial({ color, ...opts });
 }
+
+/** Small wooden archery platform with a bow mount. */
+function createArrowTowerMesh({ ghost = false } = {}) {
+  const opacity = ghost ? 0.4 : 1;
+  const mat = (c) => makeMat(c, ghost
+    ? { transparent: true, opacity, depthWrite: false }
+    : {});
+  const g = new THREE.Group();
+  const wood = mat(0x6b4a2a);
+  const dark = mat(0x3d2918);
+  const iron = mat(0x5a6068);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.28, 1.15), wood);
+  base.position.y = 0.14;
+  g.add(base);
+
+  for (const [x, z] of [[-0.38, -0.38], [0.38, -0.38], [-0.38, 0.38], [0.38, 0.38]]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.7, 0.14), dark);
+    post.position.set(x, 0.95, z);
+    g.add(post);
+  }
+
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.12, 1.05), wood);
+  deck.position.y = 1.72;
+  g.add(deck);
+
+  const railN = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.22, 0.08), dark);
+  railN.position.set(0, 1.9, -0.48);
+  g.add(railN);
+  const railS = railN.clone();
+  railS.position.z = 0.48;
+  g.add(railS);
+
+  const mount = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.32), iron);
+  mount.position.y = 1.92;
+  g.add(mount);
+
+  const bow = new THREE.Group();
+  bow.position.y = 2.1;
+  const limb = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.07, 0.07), dark);
+  bow.add(limb);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.4), dark);
+  stock.position.z = 0.12;
+  bow.add(stock);
+  g.add(bow);
+  g.userData.bow = bow;
+
+  return g;
+}
 function randPick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -369,10 +428,15 @@ export class Game {
     this.spaniards = [];
     this.boats = [];
     this.fx = [];
+    this.arrows = [];
+    this.tower = null; // { mesh, wall, fireCd, carried }
+    this._towerGhost = null;
     this._levelRoot = null;
     this._speechLayer = null;
     this._proj = new THREE.Vector3();
+    this._keysWas = new Set();
 
+    this._wavePhase = 'prep'; // 'prep' | 'active'
     this._waveTimer = 0;
     this._waveSpawning = false;
     this._toSpawn = 0;
@@ -448,6 +512,8 @@ export class Game {
       stamina: document.getElementById('stamina'),
       staminaFill: document.getElementById('staminaFill'),
       prompt: document.getElementById('prompt'),
+      heldWrap: document.getElementById('heldWrap'),
+      held: document.getElementById('held'),
       radar: document.getElementById('radar'),
     };
     this._speechLayer = document.getElementById('speechLayer');
@@ -503,10 +569,13 @@ export class Game {
     }
     for (const boat of this.boats) this.world.remove(boat.mesh);
     for (const f of this.fx) this.world.remove(f.mesh);
+    for (const a of this.arrows) this.world.remove(a.mesh);
     this.enemies.length = 0;
     this.spaniards.length = 0;
     this.boats.length = 0;
     this.fx.length = 0;
+    this.arrows.length = 0;
+    this._destroyTower();
     if (this._speechLayer) this._speechLayer.replaceChildren();
   }
 
@@ -548,9 +617,11 @@ export class Game {
     this._loadMap();
     this._spawnSpaniards(8);
     this._civReinforceCd = 4;
-    this._beginWave(1);
+    this._giveTower();
+    this._enterWavePrep(1);
 
     this.input.keys.clear();
+    this._keysWas = new Set();
     this.input.mouse.down = false;
     this.el.overlay.classList.remove('on');
     this.el.finalScore.classList.add('hidden');
@@ -574,14 +645,40 @@ export class Game {
     setArmed(this.player, false);
   }
 
+  _enterWavePrep(wave) {
+    this.wave = wave;
+    this._wavePhase = 'prep';
+    this._waveSpawning = false;
+    this._toSpawn = 0;
+    this._spawnCd = 0;
+    this._waveClearDelay = 0;
+    this._waveTimer = 0;
+    this._setPrompt(
+      `<kbd>R</kbd> START WAVE ${wave}`
+      + ` &nbsp;·&nbsp; <kbd>E</kbd> ${this.tower?.carried ? 'PLACE TOWER' : 'PICK UP / PLACE TOWER'}`,
+    );
+  }
+
   _beginWave(wave) {
     this.wave = wave;
+    this._wavePhase = 'active';
     this._waveSpawning = true;
     this._toSpawn = Math.min(40, 5 + wave * 3 + Math.floor(Math.random() * 3));
     this._spawnCd = 1.2;
     this._waveClearDelay = 0;
     this._waveTimer = 0;
     this.sfx.waveStart(wave);
+    this._setPrompt('');
+  }
+
+  _setPrompt(html) {
+    if (!this.el.prompt) return;
+    this.el.prompt.innerHTML = html || '';
+    this.el.prompt.classList.toggle('on', !!html);
+  }
+
+  _pressed(code) {
+    return this.input.keys.has(code) && !this._keysWas.has(code);
   }
 
   pause() {
@@ -611,6 +708,7 @@ export class Game {
     this.paused = false;
     this.playerAlive = false;
     this.player.visible = false;
+    this._setPrompt('');
     this.sfx.gameOver(reason);
     const title = reason === 'breach' ? 'BREACHED' : 'FALLEN';
     const subtitle = reason === 'breach'
@@ -671,7 +769,12 @@ export class Game {
     this.shake = Math.max(0, this.shake - dt * 4);
 
     this._updateWaves(dt);
-    if (this.playerAlive) this._updatePlayer(dt);
+    if (this.playerAlive) {
+      this._updatePlayer(dt);
+      this._updateTowerInteract();
+    }
+    this._updateTower(dt);
+    this._updateArrows(dt);
     this._updateBoats(dt);
     this._updateEnemies(dt);
     this._updateSpaniards(dt);
@@ -682,10 +785,19 @@ export class Game {
     this._updateSpeechBubbles();
     this._updateCamera();
     this._renderHud();
+
+    this._keysWas = new Set(this.input.keys);
   }
 
   _updateWaves(dt) {
     this._waveTimer += dt;
+
+    if (this._wavePhase === 'prep') {
+      if (this._pressed('KeyR')) {
+        this._beginWave(this.wave);
+      }
+      return;
+    }
 
     if (this._waveSpawning) {
       this._spawnCd -= dt;
@@ -699,7 +811,7 @@ export class Game {
       this._waveClearDelay += dt;
       if (this._waveClearDelay > 2.5) {
         this.score += 40 + this.wave * 15;
-        this._beginWave(this.wave + 1);
+        this._enterWavePrep(this.wave + 1);
       }
     }
   }
@@ -808,6 +920,261 @@ export class Game {
     this.camera.position.set(px + ox, this._camOffset.y, pz + oz);
     this.camera.lookAt(px, 0, pz);
     this._updateFogMask(px, pz);
+  }
+
+  _destroyTower() {
+    if (this.tower) {
+      const m = this.tower.mesh;
+      if (m.parent) m.parent.remove(m);
+      if (this.tower.wall && this.level?.walls) {
+        const idx = this.level.walls.indexOf(this.tower.wall);
+        if (idx >= 0) this.level.walls.splice(idx, 1);
+      }
+      this.tower = null;
+    }
+    if (this._towerGhost) {
+      this.world.remove(this._towerGhost);
+      this._towerGhost = null;
+    }
+    this._clearTowerAggro();
+    this._renderHeld();
+  }
+
+  _giveTower() {
+    this._destroyTower();
+    const mesh = createArrowTowerMesh();
+    mesh.scale.setScalar(0.55);
+    this.player.add(mesh);
+    mesh.position.set(0.45, 1.05, -0.35);
+    mesh.rotation.set(0.15, 0.4, 0.1);
+    this.tower = {
+      mesh,
+      wall: null,
+      fireCd: 0,
+      carried: true,
+      hp: TOWER_HP,
+      maxHp: TOWER_HP,
+      hitFlash: 0,
+    };
+    this._towerGhost = createArrowTowerMesh({ ghost: true });
+    this._towerGhost.visible = false;
+    this.world.add(this._towerGhost);
+    this._renderHeld();
+  }
+
+  _renderHeld() {
+    if (!this.el.heldWrap) return;
+    const carrying = !!this.tower?.carried;
+    this.el.heldWrap.classList.toggle('hidden', !carrying);
+  }
+
+  _towerPlacePos() {
+    const yaw = this.player.rotation.y;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    return {
+      x: this.player.position.x + fx * 1.55,
+      z: this.player.position.z + fz * 1.55,
+    };
+  }
+
+  _canPlaceTower(x, z) {
+    if (!this.level) return false;
+    if (z > this.level.waterLine - 0.3) return false;
+    if (z < this.level.breachZ + 3) return false;
+    if (Math.abs(x) > this.level.HALF - 1.5) return false;
+    // Ignore existing tower wall if any
+    const walls = this.level.walls.filter((w) => w !== this.tower?.wall);
+    if (circleHitsWall(x, z, 0.7, walls)) return false;
+    return true;
+  }
+
+  _updateTowerInteract() {
+    if (!this.tower) return;
+
+    // Ghost preview while carrying
+    if (this.tower.carried && this._towerGhost) {
+      const p = this._towerPlacePos();
+      const ok = this._canPlaceTower(p.x, p.z);
+      this._towerGhost.visible = true;
+      this._towerGhost.position.set(p.x, 0, p.z);
+      this._towerGhost.rotation.y = this.player.rotation.y;
+      this._towerGhost.traverse((o) => {
+        if (o.isMesh && o.material) {
+          o.material.color.setHex(ok ? 0x6b8a4a : 0xa04030);
+        }
+      });
+    } else if (this._towerGhost) {
+      this._towerGhost.visible = false;
+    }
+
+    if (!this._pressed('KeyE')) return;
+
+    if (this.tower.carried) {
+      const p = this._towerPlacePos();
+      if (!this._canPlaceTower(p.x, p.z)) {
+        this.sfx.uiClick();
+        return;
+      }
+      // Detach from player → world
+      this.player.remove(this.tower.mesh);
+      this.tower.mesh.scale.setScalar(1);
+      this.tower.mesh.rotation.set(0, this.player.rotation.y, 0);
+      this.tower.mesh.position.set(p.x, 0, p.z);
+      this.world.add(this.tower.mesh);
+      const w = wall(p.x, p.z, 1.05, 1.05, 1.9);
+      w._tower = true;
+      this.level.walls.push(w);
+      this.tower.wall = w;
+      this.tower.carried = false;
+      this.tower.fireCd = 0.35;
+      this.nav = buildNavGrid(this.level);
+      this.sfx.towerPlace();
+      this._renderHeld();
+      if (this._wavePhase === 'prep') {
+        this._setPrompt(`<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>E</kbd> PICK UP TOWER`);
+      }
+      return;
+    }
+
+    // Pick up if close enough
+    const dx = this.tower.mesh.position.x - this.player.position.x;
+    const dz = this.tower.mesh.position.z - this.player.position.z;
+    if (Math.hypot(dx, dz) > TOWER_PICKUP_RANGE) {
+      this.sfx.uiClick();
+      return;
+    }
+    if (this.tower.wall) {
+      const idx = this.level.walls.indexOf(this.tower.wall);
+      if (idx >= 0) this.level.walls.splice(idx, 1);
+      this.tower.wall = null;
+      this.nav = buildNavGrid(this.level);
+    }
+    this.world.remove(this.tower.mesh);
+    this.tower.mesh.scale.setScalar(0.55);
+    this.tower.mesh.position.set(0.45, 1.05, -0.35);
+    this.tower.mesh.rotation.set(0.15, 0.4, 0.1);
+    this.player.add(this.tower.mesh);
+    this.tower.carried = true;
+    this._clearTowerAggro();
+    this.sfx.towerPickup();
+    this._renderHeld();
+    if (this._wavePhase === 'prep') {
+      this._setPrompt(`<kbd>R</kbd> START WAVE ${this.wave} &nbsp;·&nbsp; <kbd>E</kbd> PLACE TOWER`);
+    }
+  }
+
+  _updateTower(dt) {
+    if (!this.tower || this.tower.carried) return;
+    this.tower.fireCd = Math.max(0, this.tower.fireCd - dt);
+    this.tower.hitFlash = Math.max(0, (this.tower.hitFlash || 0) - dt);
+    if (this.tower.hitFlash > 0) setTint(this.tower.mesh, 0xffffff);
+    else clearTint(this.tower.mesh);
+
+    const bow = this.tower.mesh.userData.bow;
+    const tx = this.tower.mesh.position.x;
+    const tz = this.tower.mesh.position.z;
+
+    // Prefer nearest invaders (exclude own footprint from LOS)
+    const losWalls = this.tower.wall
+      ? this.level.walls.filter((w) => w !== this.tower.wall)
+      : this.level.walls;
+    let best = null;
+    let bestD = TOWER_RANGE;
+    for (const e of this.enemies) {
+      if (e.knockdownTimer > 0 || e.hp <= 0) continue;
+      const d = Math.hypot(e.mesh.position.x - tx, e.mesh.position.z - tz);
+      if (d > bestD) continue;
+      if (!hasLineOfSight(tx, tz, e.mesh.position.x, e.mesh.position.z, losWalls)) continue;
+      best = e;
+      bestD = d;
+    }
+
+    if (best && bow) {
+      const ang = Math.atan2(best.mesh.position.x - tx, best.mesh.position.z - tz);
+      this.tower.mesh.rotation.y = ang;
+    }
+
+    if (!best || this.tower.fireCd > 0) return;
+
+    const aimY = best.swimming ? 0.35 : 1.05;
+    const fromY = 2.1;
+    const dx = best.mesh.position.x - tx;
+    const dy = aimY - fromY;
+    const dz = best.mesh.position.z - tz;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    this._spawnArrow(
+      tx + (dx / len) * 0.5,
+      fromY,
+      tz + (dz / len) * 0.5,
+      (dx / len) * ARROW_SPEED,
+      (dy / len) * ARROW_SPEED,
+      (dz / len) * ARROW_SPEED,
+    );
+    this.tower.fireCd = TOWER_FIRE_CD;
+    this.sfx.arrowFire();
+  }
+
+  _spawnArrow(x, y, z, vx, vy, vz) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.08, 0.55),
+      makeMat(0xc4a060),
+    );
+    mesh.position.set(x, y, z);
+    mesh.rotation.order = 'YXZ';
+    mesh.rotation.y = Math.atan2(vx, vz);
+    mesh.rotation.x = Math.atan2(-vy, Math.hypot(vx, vz));
+    this.world.add(mesh);
+    this.arrows.push({ mesh, vx, vy, vz, life: ARROW_LIFE });
+  }
+
+  _updateArrows(dt) {
+    for (let i = this.arrows.length - 1; i >= 0; i--) {
+      const a = this.arrows[i];
+      const ox = a.mesh.position.x;
+      const oz = a.mesh.position.z;
+      a.life -= dt;
+      a.vy -= 4 * dt;
+      a.mesh.position.x += a.vx * dt;
+      a.mesh.position.y += a.vy * dt;
+      a.mesh.position.z += a.vz * dt;
+      a.mesh.rotation.y = Math.atan2(a.vx, a.vz);
+      a.mesh.rotation.x = Math.atan2(-a.vy, Math.hypot(a.vx, a.vz));
+
+      let dead = a.life <= 0 || a.mesh.position.y < 0.05;
+      if (!dead) {
+        const walls = this.tower?.wall
+          ? this.level.walls.filter((w) => w !== this.tower.wall)
+          : this.level.walls;
+        if (segmentHitsWall(ox, oz, a.mesh.position.x, a.mesh.position.z, walls, 0.05)) {
+          dead = true;
+        }
+      }
+
+      if (!dead) {
+        for (let j = this.enemies.length - 1; j >= 0; j--) {
+          const e = this.enemies[j];
+          if (e.hp <= 0) continue;
+          const ex = e.mesh.position.x - a.mesh.position.x;
+          const ez = e.mesh.position.z - a.mesh.position.z;
+          const ey = (e.swimming ? 0.3 : 1.0) - a.mesh.position.y;
+          if (ex * ex + ez * ez < (e.r + 0.25) ** 2 && Math.abs(ey) < 1.2) {
+            const len = Math.hypot(a.vx, a.vz) || 1;
+            this._damageEnemy(j, TOWER_DAMAGE, a.vx / len, a.vz / len, MELEE_KNOCK_SPEED * 0.35, {
+              aggro: 'tower',
+            });
+            this._spark(a.mesh.position.x, a.mesh.position.z, 0xc4a060, 4, 0.2, a.mesh.position.y);
+            dead = true;
+            break;
+          }
+        }
+      }
+
+      if (dead) {
+        this.world.remove(a.mesh);
+        this.arrows.splice(i, 1);
+      }
+    }
   }
 
   _updatePlayer(dt) {
@@ -1176,6 +1543,7 @@ export class Game {
       hitFlash: 0,
       biteCd: 0.4 + Math.random() * 0.4,
       aggroTimer: 0,
+      aggroTarget: null, // 'player' | 'tower' | null
       swimming: !!opts.swimming,
       panicked: false,
       kbx: 0,
@@ -1203,16 +1571,19 @@ export class Game {
     e.speechCd = 3.5 + Math.random() * 4;
   }
 
-  _enrage(enemy, duration = AGGRO_DURATION) {
+  _enrage(enemy, baseDuration = AGGRO_DURATION, target = 'player') {
     const wasCalm = enemy.aggroTimer <= 0;
+    // Scatter so every chase doesn't time out in lockstep
+    const duration = baseDuration * (0.7 + Math.random() * 0.7);
     enemy.aggroTimer = Math.max(enemy.aggroTimer, duration);
+    enemy.aggroTarget = target;
     enemy.panicked = true;
     if (wasCalm && Math.random() < 0.55) {
       this._sayInvader(enemy, randPick(INVADER_FIGHT_LINES));
     }
   }
 
-  _witnessAttack(victim, excludeIndex = -1) {
+  _witnessAttack(victim, excludeIndex = -1, target = 'player') {
     const vx = victim.mesh.position.x;
     const vz = victim.mesh.position.z;
     for (let i = 0; i < this.enemies.length; i++) {
@@ -1221,17 +1592,18 @@ export class Game {
       const d = Math.hypot(e.mesh.position.x - vx, e.mesh.position.z - vz);
       if (d > WITNESS_RANGE) continue;
       if (!hasLineOfSight(e.mesh.position.x, e.mesh.position.z, vx, vz, this.level.walls)) continue;
-      this._enrage(e, AGGRO_DURATION * 0.85);
+      this._enrage(e, AGGRO_DURATION * 0.85, target);
     }
   }
 
   _damageEnemy(index, damage, dirX = 0, dirZ = 0, knockSpeed = 0, opts = {}) {
     const e = this.enemies[index];
     if (!e) return;
+    const aggro = opts.aggro === 'tower' ? 'tower' : 'player';
     e.hp -= damage;
     e.hitFlash = 0.12;
-    this._enrage(e);
-    this._witnessAttack(e, index);
+    this._enrage(e, AGGRO_DURATION, aggro);
+    this._witnessAttack(e, index, aggro);
     if (e.speechCd <= 0 && Math.random() < 0.4) {
       this._sayInvader(e, randPick(INVADER_HIT_LINES));
     }
@@ -1245,6 +1617,31 @@ export class Game {
       }
     }
     if (e.hp <= 0) this._killEnemy(index, { fromPunch: !!opts.fromPunch, dirX, dirZ });
+  }
+
+  _hurtTower(damage) {
+    if (!this.tower || this.tower.carried) return;
+    this.tower.hp = Math.max(0, (this.tower.hp ?? TOWER_HP) - damage);
+    this.tower.hitFlash = 0.14;
+    this.shake = Math.min(0.45, this.shake + 0.08);
+    this.sfx.punchHit({ hard: damage >= 2 });
+    if (this.tower.hp <= 0) {
+      this._spark(this.tower.mesh.position.x, this.tower.mesh.position.z, 0xc4a060, 10, 0.35, 1.2);
+      this._clearTowerAggro();
+      this._destroyTower();
+      this._setPrompt('TOWER DESTROYED');
+    }
+  }
+
+  _clearTowerAggro() {
+    if (!this.enemies) return;
+    for (const e of this.enemies) {
+      if (e.aggroTarget === 'tower') {
+        e.aggroTimer = 0;
+        e.aggroTarget = null;
+        e.panicked = false;
+      }
+    }
   }
 
   /** Unit steer toward a world point, pathing around walls when needed. */
@@ -1275,7 +1672,16 @@ export class Game {
       e.stunTimer = Math.max(0, e.stunTimer - dt);
       e.comboDecay = Math.max(0, e.comboDecay - dt);
       if (e.comboDecay <= 0) e.comboHits = 0;
-      if (e.aggroTimer <= 0) e.panicked = false;
+      if (e.aggroTimer <= 0) {
+        e.panicked = false;
+        e.aggroTarget = null;
+      }
+      // Tower aggro only while a placed tower exists.
+      if (e.aggroTarget === 'tower' && (!this.tower || this.tower.carried)) {
+        e.aggroTimer = 0;
+        e.aggroTarget = null;
+        e.panicked = false;
+      }
       e.civHuntCd = Math.max(0, e.civHuntCd - dt);
       e.civHuntTimer = Math.max(0, e.civHuntTimer - dt);
       e.speechCd = Math.max(0, e.speechCd - dt);
@@ -1312,12 +1718,41 @@ export class Game {
       const stunned = e.stunTimer > 0;
       const tearing = !!e.tearing;
       const holding = !!e.holding;
-      const aggressive = !downed && !stunned && !tearing && !holding && e.aggroTimer > 0 && this.playerAlive;
+      const aggressive = !downed && !stunned && !tearing && !holding && e.aggroTimer > 0
+        && (e.aggroTarget === 'tower'
+          ? !!(this.tower && !this.tower.carried)
+          : this.playerAlive);
 
       if (downed || stunned || tearing || holding) {
         // No AI — knockback only (hold/tear posing happens in dedicated updates)
         mx = 0;
         mz = 0;
+      } else if (aggressive && e.aggroTarget === 'tower' && this.tower && !this.tower.carried) {
+        const tx = this.tower.mesh.position.x;
+        const tz = this.tower.mesh.position.z;
+        const punchReach = e.r + 0.75;
+        const holdDist = punchReach - 0.15;
+        const dist = Math.hypot(tx - e.mesh.position.x, tz - e.mesh.position.z) || 1;
+        const steer = this._steer(e, tx, tz);
+        e.mesh.rotation.y = Math.atan2(steer.x || (tx - e.mesh.position.x), steer.z || (tz - e.mesh.position.z));
+
+        if (dist > holdDist + 0.12) {
+          mx = steer.x;
+          mz = steer.z;
+        } else if (dist < holdDist - 0.1) {
+          mx = -(tx - e.mesh.position.x) / dist;
+          mz = -(tz - e.mesh.position.z) / dist;
+        } else {
+          mx = 0;
+          mz = 0;
+        }
+
+        if (e.biteCd <= 0 && dist < punchReach) {
+          e.biteCd = 0.7 + Math.random() * 0.3;
+          this._hurtTower(e.damage);
+          this._spark(tx, tz, 0xc4a060, 5, 0.22, 1.1);
+          if (Math.random() < 0.4) this._sayInvader(e, randPick(INVADER_FIGHT_LINES));
+        }
       } else if (aggressive) {
         const punchReach = e.r + PLAYER_RADIUS + 0.45;
         const holdDist = punchReach - 0.2;
@@ -2754,6 +3189,17 @@ export class Game {
       ctx.beginPath();
       ctx.arc(x, y, e.kind === 'sturdy' ? 3.2 : 2.4, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // Arrow tower (placed)
+    if (this.tower && !this.tower.carried) {
+      const x = toX(this.tower.mesh.position.x);
+      const y = toY(this.tower.mesh.position.z);
+      ctx.fillStyle = '#d4b878';
+      ctx.fillRect(x - 3, y - 3, 6, 6);
+      ctx.strokeStyle = 'rgba(8, 22, 32, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - 3, y - 3, 6, 6);
     }
 
     // Player — chevron facing movement / facing yaw

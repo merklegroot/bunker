@@ -19,6 +19,10 @@
         <div id="stamina" role="meter" aria-label="stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
           <div id="staminaFill"></div>
         </div>
+        <div id="heldWrap" class="hidden">
+          <span id="heldLabel">CARRYING</span>
+          <span id="held">ARROW TOWER</span>
+        </div>
       </div>
       <div id="meta">
         <div id="waveWrap"><span id="waveLabel">WAVE</span><span id="wave">1</span></div>
@@ -41,6 +45,8 @@
     <div id="hints">
       <kbd>WASD</kbd> move
       <kbd>SHIFT</kbd> run
+      <kbd>E</kbd> tower
+      <kbd>R</kbd> wave
       <kbd>CLICK</kbd>/<kbd>SPACE</kbd> punch
       <kbd>ESC</kbd> pause
     </div>
@@ -49,7 +55,7 @@
   <div id="overlay" class="on">
     <div class="panel">
       <h1 id="title">TARAJAL</h1>
-      <p id="subtitle">Boats on the water. The city behind you. Hold the line with your fists.</p>
+      <p id="subtitle">Place your arrow tower. Start the wave when ready. Hold the beach.</p>
       <p id="finalScore" class="hidden"></p>
       <div id="menuActions">
         <button id="startBtn" type="button">DEFEND</button>

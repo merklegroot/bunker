@@ -193,4 +193,28 @@ export class Sfx {
   uiClick() {
     this._tone('square', 520, 0.05, { gain: 0.06, freqEnd: 380, attack: 0.001, decay: 0.02 });
   }
+
+  arrowFire() {
+    this._tone('triangle', 640, 0.07, { gain: 0.07, freqEnd: 280, attack: 0.001, decay: 0.03 });
+    this._noiseBurst({
+      dur: 0.06,
+      gain: 0.05,
+      filterFreq: 1800,
+      filterType: 'bandpass',
+    });
+  }
+
+  towerPlace() {
+    this._tone('square', 180, 0.08, { gain: 0.07, freqEnd: 120, attack: 0.001, decay: 0.04 });
+    this._noiseBurst({
+      dur: 0.1,
+      gain: 0.06,
+      filterFreq: 350,
+      filterType: 'lowpass',
+    });
+  }
+
+  towerPickup() {
+    this._tone('triangle', 300, 0.08, { gain: 0.06, freqEnd: 420, attack: 0.001, decay: 0.04 });
+  }
 }
