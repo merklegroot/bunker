@@ -985,16 +985,24 @@ function addBench(root, x, z, rotY = 0) {
 function addSeagull(root, env, x, y, z) {
   const g = new THREE.Group();
   g.position.set(x, y, z);
+  // Local +Z = nose / flight direction; wings span ±X
   const body = new THREE.Mesh(
     new THREE.SphereGeometry(0.12, 5, 4),
     makeMat(0xf0f0f0),
   );
-  body.scale.set(1.2, 0.7, 0.8);
+  body.scale.set(0.75, 0.65, 1.35);
   g.add(body);
-  const wingL = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 0.16), makeMat(0xe8e8e8));
+  const beak = new THREE.Mesh(
+    new THREE.ConeGeometry(0.05, 0.16, 4),
+    makeMat(0xe8a040),
+  );
+  beak.rotation.x = Math.PI / 2;
+  beak.position.set(0, 0, 0.2);
+  g.add(beak);
+  const wingL = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 0.18), makeMat(0xe8e8e8));
   wingL.position.set(-0.28, 0.02, 0);
   g.add(wingL);
-  const wingR = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 0.16), makeMat(0xe8e8e8));
+  const wingR = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.04, 0.18), makeMat(0xe8e8e8));
   wingR.position.set(0.28, 0.02, 0);
   g.add(wingR);
   g.userData.wingL = wingL;
@@ -1069,10 +1077,15 @@ export function updateLevelEnv(root, time) {
   }
   for (const s of env.seagulls) {
     const a = time * s.userData.speed + s.userData.phase;
-    s.position.x = s.userData.baseX + Math.cos(a) * s.userData.radius;
-    s.position.z = s.userData.baseZ + Math.sin(a) * s.userData.radius * 0.55;
+    const rx = s.userData.radius;
+    const rz = s.userData.radius * 0.55;
+    s.position.x = s.userData.baseX + Math.cos(a) * rx;
+    s.position.z = s.userData.baseZ + Math.sin(a) * rz;
     s.position.y = s.userData.baseY + Math.sin(a * 2.2) * 0.6;
-    s.rotation.y = -a + Math.PI * 0.5;
+    // Face tangent of the flight ellipse (local +Z = forward)
+    const tx = -Math.sin(a) * rx;
+    const tz = Math.cos(a) * rz;
+    s.rotation.y = Math.atan2(tx, tz);
     const flap = Math.sin(time * 8 + s.userData.phase) * 0.45;
     s.userData.wingL.rotation.z = flap;
     s.userData.wingR.rotation.z = -flap;
