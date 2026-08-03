@@ -31,11 +31,11 @@ export function buildLevelSpec(_wave = 1) {
   // —— Ground planes (non-overlapping Z bands to avoid z-fighting) ——
   // Water is built as a shaded plane in buildLevelMeshes (deep + shallow bands).
   // Wet sand band  z: 8 → 2
-  floors.push({ x: 0, z: 5, w: MAP + 2, d: 6, color: 0xb8a878, y: -0.04, kind: 'wet' });
+  floors.push({ x: 0, z: 5, w: MAP + 2, d: 6, color: 0xa89868, y: -0.04, kind: 'wet' });
   // Dry sand  z: 2 → -14
-  floors.push({ x: 0, z: -6, w: MAP + 2, d: 16, color: 0xd8c49a, y: 0, kind: 'sand' });
+  floors.push({ x: 0, z: -6, w: MAP + 2, d: 16, color: 0xdcc89a, y: 0, kind: 'sand' });
   // Warm sand strip near promenade
-  floors.push({ x: 0, z: -13.2, w: MAP + 2, d: 1.6, color: 0xcbb892, y: 0.02, kind: 'sand' });
+  floors.push({ x: 0, z: -13.2, w: MAP + 2, d: 1.6, color: 0xd0b888, y: 0.02, kind: 'sand' });
   // Promenade / asphalt  z: -14 → -18
   floors.push({ x: 0, z: -16, w: MAP + 2, d: 4, color: 0x5a5a58, y: 0.08, kind: 'road' });
   // City plaza  z: -18 → -36
@@ -560,15 +560,18 @@ function createWaterMaterial(waterLine) {
   });
 }
 
-function createSandMaterial(baseColor, { wet = false, stone = false } = {}) {
+function createSandMaterial(baseColor, { wet = false, stone = false, waterLine = 10 } = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uBase: { value: new THREE.Color(baseColor) },
-      uDark: { value: new THREE.Color(wet ? 0x9a8a60 : stone ? 0x4a4a48 : 0xc0ac78) },
-      uLight: { value: new THREE.Color(wet ? 0xc8b888 : stone ? 0x7a7870 : 0xe8d8b0) },
+      uDark: { value: new THREE.Color(wet ? 0x8a7a52 : stone ? 0x4a4a48 : 0xb89a68) },
+      uLight: { value: new THREE.Color(wet ? 0xd0c090 : stone ? 0x7a7870 : 0xf0e2c0) },
+      uWarm: { value: new THREE.Color(wet ? 0xa89868 : 0xe0b878) },
+      uCool: { value: new THREE.Color(wet ? 0x7a8a70 : 0xc8c0a0) },
       uWet: { value: wet ? 1.0 : 0.0 },
       uStone: { value: stone ? 1.0 : 0.0 },
+      uWaterLine: { value: waterLine },
     },
     vertexShader: /* glsl */`
       varying vec2 vWorldXZ;
@@ -583,31 +586,90 @@ function createSandMaterial(baseColor, { wet = false, stone = false } = {}) {
       uniform vec3 uBase;
       uniform vec3 uDark;
       uniform vec3 uLight;
+      uniform vec3 uWarm;
+      uniform vec3 uCool;
       uniform float uWet;
       uniform float uStone;
+      uniform float uWaterLine;
       varying vec2 vWorldXZ;
       ${glslNoiseFns()}
 
+      float grain(vec2 p) {
+        return hash21(floor(p)) * 0.65 + hash21(floor(p * 1.7 + 3.1)) * 0.35;
+      }
+
       void main() {
-        float n = fbm(vWorldXZ * (uStone > 0.5 ? 0.9 : 0.45));
-        float n2 = fbm(vWorldXZ * 1.3 + 20.0);
-        vec3 col = mix(uDark, uBase, smoothstep(0.25, 0.75, n));
-        col = mix(col, uLight, smoothstep(0.55, 0.9, n2) * (uStone > 0.5 ? 0.22 : 0.35));
+        vec2 p = vWorldXZ;
 
         if (uStone > 0.5) {
-          // Soft paving joints
-          vec2 g = abs(fract(vWorldXZ * 0.55) - 0.5);
+          float n = fbm(p * 0.9);
+          float n2 = fbm(p * 1.3 + 20.0);
+          vec3 col = mix(uDark, uBase, smoothstep(0.25, 0.75, n));
+          col = mix(col, uLight, smoothstep(0.55, 0.9, n2) * 0.22);
+          vec2 g = abs(fract(p * 0.55) - 0.5);
           float joint = smoothstep(0.42, 0.48, max(g.x, g.y));
           col = mix(col, uDark * 0.85, joint * 0.55);
+          gl_FragColor = vec4(col, 1.0);
+          return;
+        }
+
+        // Macro dune / blotch fields
+        float macro = fbm(p * 0.18 + vec2(2.7, -1.4));
+        float mid = fbm(p * 0.55 + vec2(-8.2, 5.1));
+        float fine = fbm(p * 2.4 + vec2(macro * 1.5, mid));
+
+        vec3 col = mix(uDark, uBase, smoothstep(0.22, 0.78, macro));
+        col = mix(col, uWarm, smoothstep(0.4, 0.85, mid) * 0.38);
+        col = mix(col, uLight, smoothstep(0.55, 0.95, fine) * (uWet > 0.5 ? 0.18 : 0.42));
+        col = mix(col, uCool, (1.0 - mid) * (uWet > 0.5 ? 0.22 : 0.1));
+
+        // Wind ripples — mostly shore-parallel, distorted by macro noise
+        float windDir = p.x + macro * 1.8 + mid * 0.9;
+        float ripLo = sin(p.y * 1.65 + windDir * 0.35) * 0.5 + 0.5;
+        float ripHi = sin(p.y * 4.2 + windDir * 0.9 + fine * 2.5) * 0.5 + 0.5;
+        float ripAmp = uWet > 0.5 ? 0.028 : 0.055;
+        col += (ripLo - 0.5) * ripAmp * vec3(1.0, 0.96, 0.88);
+        col += (ripHi - 0.5) * ripAmp * 0.55 * vec3(1.0, 0.95, 0.86);
+
+        // Soft fake lighting from ripple slope
+        float slope = ripHi - ripLo;
+        col += slope * (uWet > 0.5 ? 0.02 : 0.035) * vec3(1.05, 1.0, 0.9);
+
+        // Micro grain
+        float g = grain(p * 28.0);
+        col *= 0.93 + g * 0.14;
+
+        // Shells / grit / darker flecks
+        float peck = hash21(floor(p * 3.4));
+        float shell = step(0.965, peck);
+        float grit = step(0.91, hash21(floor(p * 7.2 + 12.0))) * (1.0 - shell);
+        col = mix(col, uDark * 0.72, grit * 0.45);
+        col = mix(col, mix(uLight, uWarm, 0.45), shell * 0.7);
+
+        if (uWet > 0.5) {
+          // Moisture toward the sea + cooler dampening
+          float soggy = smoothstep(uWaterLine - 8.0, uWaterLine - 1.0, p.y);
+          col = mix(col, uDark * 0.92, soggy * 0.28);
+          col *= 0.9 + mid * 0.08;
+
+          // Wet sheen trails
+          float sheenA = pow(max(0.0, sin(p.x * 0.32 + p.y * 0.15 + uTime * 0.18 + fine)), 10.0);
+          float sheenB = pow(max(0.0, sin(p.x * 0.9 - p.y * 0.4 + uTime * 0.12)), 14.0);
+          col += (sheenA * 0.1 + sheenB * 0.05) * vec3(0.72, 0.88, 0.98);
+
+          // Salt crust / foam residue near waterline
+          float crustBand = smoothstep(uWaterLine - 3.2, uWaterLine - 1.2, p.y)
+            * (1.0 - smoothstep(uWaterLine - 1.0, uWaterLine + 0.4, p.y));
+          float crust = smoothstep(0.55, 0.8, fbm(p * 1.6 + vec2(uTime * 0.02, 0.0)));
+          col = mix(col, vec3(0.86, 0.88, 0.82), crustBand * crust * 0.35);
         } else {
-          float rip = sin(vWorldXZ.x * 2.2 + vWorldXZ.y * 0.35 + n * 2.0) * 0.5 + 0.5;
-          col += (rip - 0.5) * 0.04 * (1.0 - uWet);
-          if (uWet > 0.5) {
-            float sheen = pow(max(0.0, sin(vWorldXZ.x * 0.4 + uTime * 0.2)), 8.0) * 0.08;
-            col += sheen * vec3(0.7, 0.85, 0.95);
-          }
-          float pebble = step(0.93, hash21(floor(vWorldXZ * 2.5)));
-          col = mix(col, uDark * 0.75, pebble * 0.55);
+          // Dry sand sparkle (mica)
+          float spark = step(0.988, hash21(floor(p * 9.0) + floor(uTime * 0.35)));
+          col += spark * 0.12 * vec3(1.0, 0.98, 0.9);
+
+          // Faint dunes streaking inland
+          float streak = smoothstep(0.62, 0.9, fbm(vec2(p.x * 0.12, p.y * 0.55)));
+          col = mix(col, uWarm * 1.05, streak * 0.12);
         }
 
         gl_FragColor = vec4(col, 1.0);
@@ -1190,7 +1252,7 @@ export function buildLevelMeshes(root, spec, { assets = null } = {}) {
   for (const f of floors) {
     let mat;
     if (f.kind === 'sand' || f.kind === 'wet') {
-      mat = createSandMaterial(f.color, { wet: f.kind === 'wet' });
+      mat = createSandMaterial(f.color, { wet: f.kind === 'wet', waterLine });
       env.sandMats.push(mat);
     } else if (f.kind === 'plaza' || f.kind === 'road') {
       mat = createSandMaterial(f.color, { stone: true });
