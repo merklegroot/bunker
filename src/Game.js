@@ -1056,6 +1056,7 @@ export class Game {
       dbgGatesBtn: document.getElementById('dbgGatesBtn'),
       dbgSpeechBtn: document.getElementById('dbgSpeechBtn'),
       dbgPathsBtn: document.getElementById('dbgPathsBtn'),
+      dbgKillEnemiesBtn: document.getElementById('dbgKillEnemiesBtn'),
       dbgAtkPunch: document.getElementById('dbgAtkPunch'),
       dbgAtkBehead: document.getElementById('dbgAtkBehead'),
       dbgAtkTear: document.getElementById('dbgAtkTear'),
@@ -1104,6 +1105,11 @@ export class Game {
       this.el.dbgPathsBtn.addEventListener('click', () => {
         this._setDebugPaths(!this.debugPaths);
         this.sfx.uiClick();
+      });
+    }
+    if (this.el.dbgKillEnemiesBtn) {
+      this.el.dbgKillEnemiesBtn.addEventListener('click', () => {
+        this._debugKillAllEnemies();
       });
     }
     for (const [key, el] of [
@@ -1328,6 +1334,34 @@ export class Game {
     this.debugPaths = !!on;
     this._renderDebugToggles();
     if (!this.debugPaths) this._clearPathDebug(true);
+  }
+
+  /** Debug: wipe every living invader (score/gold still awarded once). */
+  _debugKillAllEnemies() {
+    if (!this.running) {
+      this.sfx.uiClick();
+      return;
+    }
+    const n = this.enemies.length;
+    if (n === 0) {
+      this.sfx.uiClick();
+      return;
+    }
+    // Clear mid-attack holds so civilians aren't left frozen
+    for (const e of this.enemies) {
+      if (e.weaponCiv) this._discardClubWeapon(e, { fling: false });
+      if (e.holding) this._releaseHold(e.holding);
+      if (e.beheading) this._cancelBehead(e.beheading);
+    }
+    for (const s of [...this.spaniards]) {
+      if (s.tearing) this._cancelTear(s);
+    }
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      this._killEnemy(i, { silent: true });
+    }
+    this.sfx.enemyDie();
+    this._renderHud();
+    this._setPrompt(`DEBUG · CLEARED ${n} ENEM${n === 1 ? 'Y' : 'IES'}`);
   }
 
   _ensurePathDebug() {
@@ -5909,12 +5943,14 @@ export class Game {
     }
     const x = e.mesh.position.x;
     const z = e.mesh.position.z;
-    if (opts.fromPunch && Math.random() < 0.4) {
-      this._mildDismember(e.mesh, opts.dirX || 0, opts.dirZ || 0);
+    if (!opts.silent) {
+      if (opts.fromPunch && Math.random() < 0.4) {
+        this._mildDismember(e.mesh, opts.dirX || 0, opts.dirZ || 0);
+      }
+      this._bloodSpray(x, z, opts.dirX || 0, opts.dirZ || 0, { mild: true });
+      this._spark(x, z, COL.blood, 10, 0.35, 1.0);
+      this.sfx.enemyDie();
     }
-    this._bloodSpray(x, z, opts.dirX || 0, opts.dirZ || 0, { mild: true });
-    this._spark(x, z, COL.blood, 10, 0.35, 1.0);
-    this.sfx.enemyDie();
     if (e.bubble) e.bubble.remove();
     this.world.remove(e.mesh);
     this.enemies.splice(index, 1);
