@@ -27,6 +27,17 @@ const PALM_FILES = {
   palmDetailed: 'tree_palmDetailedShort.glb',
 };
 
+const ROCK_FILES = {
+  largeA: 'rock_largeA.glb',
+  largeB: 'rock_largeB.glb',
+  largeC: 'rock_largeC.glb',
+  smallA: 'rock_smallA.glb',
+  smallE: 'rock_smallE.glb',
+  smallH: 'rock_smallH.glb',
+  tallA: 'rock_tallA.glb',
+  tallC: 'rock_tallC.glb',
+};
+
 /** Nature Kit palms ship with stylized teal/peach; recolor toward Mediterranean greens. */
 const PALM_RECOLOR = {
   leaf: 0x2f7a3e,
@@ -35,8 +46,16 @@ const PALM_RECOLOR = {
   barkAlt: 0x7a5530,
 };
 
+/** Nature Kit rocks use the same dirt/grass palette; map to beach stone. */
+const ROCK_RECOLOR = {
+  stone: 0x6a6458,
+  stoneAlt: 0x5a5448,
+  lichen: 0x7a7060,
+  lichenAlt: 0x8a8070,
+};
+
 /** Convert lit Kenney materials to MeshBasic so they read in our unlit scene. */
-function toUnlit(root, { recolorPalm = false } = {}) {
+function toUnlit(root, { recolorPalm = false, recolorRock = false } = {}) {
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
     const srcList = Array.isArray(o.material) ? o.material : [o.material];
@@ -57,6 +76,16 @@ function toUnlit(root, { recolorPalm = false } = {}) {
           // Fallback by luminance of original: warm → bark, cool → leaf
           const c = m.color || new THREE.Color(color);
           color = c.g > c.r ? PALM_RECOLOR.leaf : PALM_RECOLOR.barkAlt;
+        }
+      } else if (recolorRock) {
+        const name = (m.name || '').toLowerCase();
+        if (name.includes('grass') || name.includes('moss') || name.includes('lichen')) {
+          color = i % 2 ? ROCK_RECOLOR.lichenAlt : ROCK_RECOLOR.lichen;
+        } else if (name.includes('dirt') || name.includes('rock') || name.includes('stone')) {
+          color = i % 2 ? ROCK_RECOLOR.stoneAlt : ROCK_RECOLOR.stone;
+        } else {
+          const c = m.color || new THREE.Color(color);
+          color = c.g > c.r ? ROCK_RECOLOR.lichen : ROCK_RECOLOR.stone;
         }
       }
 
@@ -143,6 +172,7 @@ export class KenneyAssets {
     this.natureReady = false;
     this._templates = {};
     this._palms = {};
+    this._rocks = {};
   }
 
   async load() {
@@ -164,14 +194,20 @@ export class KenneyAssets {
     }));
     this.ready = true;
 
-    // —— Palms only (Nature Kit) ——
+    // —— Nature Kit palms + rocks ——
     loader.setPath(NATURE_BASE);
     loader.setResourcePath(NATURE_BASE);
-    await Promise.all(Object.entries(PALM_FILES).map(async ([key, file]) => {
-      const gltf = await loader.loadAsync(file);
-      this._palms[key] = normalizePiece(gltf.scene, { recolorPalm: true });
-    }));
-    this.natureReady = Object.keys(this._palms).length > 0;
+    await Promise.all([
+      ...Object.entries(PALM_FILES).map(async ([key, file]) => {
+        const gltf = await loader.loadAsync(file);
+        this._palms[key] = normalizePiece(gltf.scene, { recolorPalm: true });
+      }),
+      ...Object.entries(ROCK_FILES).map(async ([key, file]) => {
+        const gltf = await loader.loadAsync(file);
+        this._rocks[key] = normalizePiece(gltf.scene, { recolorRock: true });
+      }),
+    ]);
+    this.natureReady = Object.keys(this._palms).length > 0 || Object.keys(this._rocks).length > 0;
     return this;
   }
 
@@ -209,7 +245,7 @@ export class KenneyAssets {
 
   /** Place a Kenney palm at (x,z). Returns group or null. */
   clonePalm(x, z, scale = 1) {
-    if (!this.natureReady) return null;
+    if (!this.natureReady || !Object.keys(this._palms).length) return null;
     const keys = Object.keys(this._palms);
     const key = pickKey(keys, x * 3 + z * 7);
     const tmpl = this._palms[key];
@@ -223,6 +259,37 @@ export class KenneyAssets {
     g.rotation.y = (x * 1.7 + z) * 0.35;
     g.userData.kenneyPalm = true;
     g.userData.phase = x + z;
+    return g;
+  }
+
+  /** Rock sized to approximate wall footprint w×d×h. */
+  cloneRock(wall) {
+    if (!Object.keys(this._rocks).length) return null;
+    const { x, z, w, d, h } = wall;
+    const tall = h > 0.85;
+    const wide = Math.max(w, d) > 1.8;
+    let pool;
+    if (tall) pool = ['tallA', 'tallC', 'largeA'];
+    else if (wide) pool = ['largeA', 'largeB', 'largeC'];
+    else pool = ['smallA', 'smallE', 'smallH', 'largeC'];
+
+    const available = pool.filter((k) => this._rocks[k]);
+    const key = available.length
+      ? pickKey(available, x * 5 + z * 3)
+      : pickKey(Object.keys(this._rocks), x * 5 + z * 3);
+    const tmpl = this._rocks[key];
+    if (!tmpl) return null;
+
+    const g = tmpl.clone(true);
+    const fp = tmpl.userData.footprint || 1;
+    const th = tmpl.userData.height || 1;
+    const sxz = Math.max(w, d) / fp;
+    const sy = Math.max(0.45, h) / th;
+    // Prefer fitting height while keeping a sensible ground presence
+    const s = Math.max(sxz, sy) * 0.95;
+    g.scale.setScalar(s);
+    g.position.set(x, 0, z);
+    g.rotation.y = (x + z) * 0.4;
     return g;
   }
 }

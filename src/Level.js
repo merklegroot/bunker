@@ -873,7 +873,13 @@ function addBuildingDetail(root, w, color) {
   }
 }
 
-function addRockCluster(root, w, color) {
+function addRockCluster(root, w, color, assets = null) {
+  const kenney = assets?.cloneRock?.(w);
+  if (kenney) {
+    root.add(kenney);
+    return;
+  }
+
   addGroundShadow(root, w.x, w.z, w.w * 0.7, w.d * 0.7, 0.2);
 
   const base = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), makeMat(color));
@@ -1287,7 +1293,7 @@ export function buildLevelMeshes(root, spec, { assets = null } = {}) {
     else color = BUILDING[bi++ % BUILDING.length];
 
     if (isLowRock) {
-      addRockCluster(root, w, color);
+      addRockCluster(root, w, color, assets);
       continue;
     }
 
