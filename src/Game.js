@@ -16,6 +16,8 @@ import {
   segmentHitsWall,
   wall,
   steerTo,
+  nearestWalkable,
+  cellToWorld,
 } from './Level.js';
 import { KenneyAssets } from './KenneyAssets.js';
 
@@ -776,6 +778,7 @@ export class Game {
     this.breachLimit = BREACH_LIMIT;
     this.debugGatesClosed = false;
     this.debugSpeech = true;
+    this.debugPaths = false;
     this.debugAttacks = { punch: true, behead: true, tear: true, club: true };
     this.debugLeader = { pound: true, charge: true };
     this._gateBarrierWall = null;
@@ -906,6 +909,7 @@ export class Game {
       dbgMenu: document.getElementById('dbgMenu'),
       dbgGatesBtn: document.getElementById('dbgGatesBtn'),
       dbgSpeechBtn: document.getElementById('dbgSpeechBtn'),
+      dbgPathsBtn: document.getElementById('dbgPathsBtn'),
       dbgAtkPunch: document.getElementById('dbgAtkPunch'),
       dbgAtkBehead: document.getElementById('dbgAtkBehead'),
       dbgAtkTear: document.getElementById('dbgAtkTear'),
@@ -943,6 +947,12 @@ export class Game {
     if (this.el.dbgSpeechBtn) {
       this.el.dbgSpeechBtn.addEventListener('click', () => {
         this._setDebugSpeech(!this.debugSpeech);
+        this.sfx.uiClick();
+      });
+    }
+    if (this.el.dbgPathsBtn) {
+      this.el.dbgPathsBtn.addEventListener('click', () => {
+        this._setDebugPaths(!this.debugPaths);
         this.sfx.uiClick();
       });
     }
@@ -1129,6 +1139,7 @@ export class Game {
       nextOff: 'open',
     });
     this._paintDebugToggle(this.el.dbgSpeechBtn, 'Speech', this.debugSpeech);
+    this._paintDebugToggle(this.el.dbgPathsBtn, 'Paths', this.debugPaths);
     this._paintDebugToggle(this.el.dbgAtkPunch, 'Punch', this.debugAttacks.punch);
     this._paintDebugToggle(this.el.dbgAtkBehead, 'Behead', this.debugAttacks.behead);
     this._paintDebugToggle(this.el.dbgAtkTear, 'Tear apart', this.debugAttacks.tear);
@@ -1161,6 +1172,100 @@ export class Game {
       hush(this.enemies);
       hush(this.spaniards);
     }
+  }
+
+  _setDebugPaths(on) {
+    this.debugPaths = !!on;
+    this._renderDebugToggles();
+    if (!this.debugPaths) this._clearPathDebug(true);
+  }
+
+  _ensurePathDebug() {
+    if (this._pathDebugRoot) return;
+    this._pathDebugRoot = new THREE.Group();
+    this._pathDebugRoot.name = 'pathDebug';
+    this.world.add(this._pathDebugRoot);
+    this._pathDebugGeo = {
+      goal: new THREE.SphereGeometry(0.22, 8, 6),
+      way: new THREE.SphereGeometry(0.11, 6, 5),
+    };
+    this._pathDebugMats = {
+      civGoal: new THREE.MeshBasicMaterial({ color: 0x7ec8a0, depthTest: false }),
+      civLine: new THREE.LineBasicMaterial({ color: 0x7ec8a0, depthTest: false }),
+      foeGoal: new THREE.MeshBasicMaterial({ color: 0xe07050, depthTest: false }),
+      foeLine: new THREE.LineBasicMaterial({ color: 0xe07050, depthTest: false }),
+      way: new THREE.MeshBasicMaterial({ color: 0xe8c46a, depthTest: false }),
+    };
+  }
+
+  _clearPathDebug(hide = false) {
+    if (!this._pathDebugRoot) return;
+    const shared = this._pathDebugGeo;
+    while (this._pathDebugRoot.children.length) {
+      const c = this._pathDebugRoot.children[0];
+      this._pathDebugRoot.remove(c);
+      if (
+        c.geometry
+        && c.geometry !== shared?.goal
+        && c.geometry !== shared?.way
+      ) {
+        c.geometry.dispose();
+      }
+    }
+    if (hide) this._pathDebugRoot.visible = false;
+  }
+
+  _updatePathDebug() {
+    if (!this.debugPaths || !this.running) {
+      if (this._pathDebugRoot) this._pathDebugRoot.visible = false;
+      return;
+    }
+    this._ensurePathDebug();
+    this._pathDebugRoot.visible = true;
+    this._clearPathDebug(false);
+
+    const y = 0.4;
+    const addAgent = (agent, isCiv) => {
+      if (!agent?.mesh || agent.hp <= 0) return;
+      const gx = agent._steerGoalX;
+      const gz = agent._steerGoalZ;
+      if (gx == null || gz == null) return;
+      const x = agent.mesh.position.x;
+      const z = agent.mesh.position.z;
+      const goalMat = isCiv ? this._pathDebugMats.civGoal : this._pathDebugMats.foeGoal;
+      const lineMat = isCiv ? this._pathDebugMats.civLine : this._pathDebugMats.foeLine;
+
+      const marker = new THREE.Mesh(this._pathDebugGeo.goal, goalMat);
+      marker.position.set(gx, y, gz);
+      marker.renderOrder = 20;
+      this._pathDebugRoot.add(marker);
+
+      const pts = [new THREE.Vector3(x, y, z)];
+      const st = agent._pathState;
+      if (st?.path?.length) {
+        for (let i = st.i || 0; i < st.path.length; i++) {
+          const w = st.path[i];
+          pts.push(new THREE.Vector3(w.x, y, w.z));
+          const dot = new THREE.Mesh(this._pathDebugGeo.way, this._pathDebugMats.way);
+          dot.position.set(w.x, y, w.z);
+          dot.renderOrder = 20;
+          this._pathDebugRoot.add(dot);
+        }
+      }
+      const last = pts[pts.length - 1];
+      if (Math.hypot(last.x - gx, last.z - gz) > 0.2) {
+        pts.push(new THREE.Vector3(gx, y, gz));
+      }
+      if (pts.length >= 2) {
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(geo, lineMat);
+        line.renderOrder = 19;
+        this._pathDebugRoot.add(line);
+      }
+    };
+
+    for (const e of this.enemies) addAgent(e, false);
+    for (const s of this.spaniards) addAgent(s, true);
   }
 
   _atkEnabled(kind) {
@@ -1563,6 +1668,7 @@ export class Game {
       }
     }
     this._updateSpeechBubbles();
+    this._updatePathDebug();
     this._updateCamera();
     this._renderHud();
     this._keysWas = new Set(this.input.keys);
@@ -1610,6 +1716,7 @@ export class Game {
     this._updateTearings(dt);
     this._updateFx(dt);
     this._updateSpeechBubbles();
+    this._updatePathDebug();
     this._updateCamera();
     this._renderHud();
 
@@ -2713,9 +2820,11 @@ export class Game {
     }
   }
 
-  /** Unit steer toward a world point, pathing around walls when needed. */
+  /** Unit steer toward a world point, pathing around walls/rocks at body width. */
   _steer(agent, tx, tz) {
     if (!agent._pathState) agent._pathState = {};
+    agent._steerGoalX = tx;
+    agent._steerGoalZ = tz;
     return steerTo(
       this.nav,
       this.level.walls,
@@ -2725,7 +2834,16 @@ export class Game {
       tz,
       agent._pathState,
       this.time,
+      agent.r ?? 0.4,
     );
+  }
+
+  /** Snap a world point onto the nearest walkable nav cell. */
+  _snapWalkable(x, z) {
+    if (!this.nav) return { x, z };
+    const cell = nearestWalkable(this.nav, x, z);
+    const w = cellToWorld(this.nav, cell.cx, cell.cz);
+    return { x: w.x, z: w.z };
   }
 
   _updateEnemies(dt) {
@@ -3257,10 +3375,11 @@ export class Game {
     const homeZ = this.level.breachZ + 5 + Math.random() * Math.max(3, this.level.shoreLine - this.level.breachZ - 6);
     const s = this._spawnSpaniard(x, z, { fromNorth: true });
     if (!s) return;
-    s.homeX = homeX;
-    s.homeZ = homeZ;
-    s.wanderTx = homeX;
-    s.wanderTz = homeZ;
+    const home = this._snapWalkable(homeX, homeZ);
+    s.homeX = home.x;
+    s.homeZ = clamp(home.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
+    s.wanderTx = s.homeX;
+    s.wanderTz = s.homeZ;
     s.wanderCd = 0.2;
     // Face south toward the beach
     s.mesh.rotation.y = Math.atan2(homeX - s.mesh.position.x, homeZ - s.mesh.position.z);
@@ -3276,6 +3395,12 @@ export class Game {
     x = this._pos.x;
     const zMin = opts.fromNorth ? this.level.breachZ - 10 : this.level.breachZ + 3;
     z = clamp(this._pos.z, zMin, this.level.shoreLine - 0.5);
+    // Keep homes/starts off rock footprints so wander goals begin open
+    if (this.nav && !opts.fromNorth) {
+      const snapped = this._snapWalkable(x, z);
+      x = snapped.x;
+      z = clamp(snapped.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
+    }
 
     const female = Math.random() < 0.48;
     const mesh = createPerson(spainClothes(female), { armed: false, female });
@@ -5177,9 +5302,11 @@ export class Game {
         const n = Math.hypot(fx, fz) || 1;
         fx /= n;
         fz /= n;
-        const fleeTx = s.mesh.position.x + fx * 10;
-        const fleeTz = s.mesh.position.z + fz * 10;
-        const steer = this._steer(s, fleeTx, fleeTz);
+        const fleeGoal = this._snapWalkable(
+          s.mesh.position.x + fx * 10,
+          s.mesh.position.z + fz * 10,
+        );
+        const steer = this._steer(s, fleeGoal.x, fleeGoal.z);
         const wobble = Math.sin(this.time * 9 + i * 2.1) * 0.35;
         mx = steer.x + (-steer.z) * wobble;
         mz = steer.z + steer.x * wobble;
@@ -5219,10 +5346,12 @@ export class Game {
           const lateral = slot * 0.55;
           const nx = dx / (greetD || 1);
           const nz = dz / (greetD || 1);
-          const greetTx = greet.mesh.position.x - nx * polite + (-nz) * lateral;
-          const greetTz = greet.mesh.position.z - nz * polite + nx * lateral;
+          const greetGoal = this._snapWalkable(
+            greet.mesh.position.x - nx * polite + (-nz) * lateral,
+            greet.mesh.position.z - nz * polite + nx * lateral,
+          );
           if (greetD > polite) {
-            const steer = this._steer(s, greetTx, greetTz);
+            const steer = this._steer(s, greetGoal.x, greetGoal.z);
             mx = steer.x;
             mz = steer.z;
             moveSpeed = s.speed * 0.7;
@@ -5237,19 +5366,24 @@ export class Game {
             let bestZ = s.homeZ;
             let bestScore = -Infinity;
             for (let t = 0; t < 5; t++) {
-              const tx = s.homeX + (Math.random() - 0.5) * 7;
-              const tz = clamp(
+              let tx = s.homeX + (Math.random() - 0.5) * 7;
+              let tz = clamp(
                 s.homeZ + (Math.random() - 0.5) * 5,
                 this.level.breachZ + 3,
                 this.level.shoreLine - 0.5,
               );
+              const snapped = this._snapWalkable(tx, tz);
+              tx = snapped.x;
+              tz = clamp(snapped.z, this.level.breachZ + 3, this.level.shoreLine - 0.5);
               let crowding = 0;
               for (const o of this.spaniards) {
                 if (o === s || o.hp <= 0) continue;
                 const d = Math.hypot(o.mesh.position.x - tx, o.mesh.position.z - tz);
                 if (d < 2.8) crowding += 1.8 / Math.max(0.35, d);
               }
-              const score = -crowding + Math.random() * 0.35;
+              // Prefer open sand over cells that sit on (or in) obstacles
+              const blockedPenalty = circleHitsWall(tx, tz, s.r + 0.15, this.level.walls) ? 8 : 0;
+              const score = -crowding - blockedPenalty + Math.random() * 0.35;
               if (score > bestScore) {
                 bestScore = score;
                 bestX = tx;
@@ -5335,12 +5469,14 @@ export class Game {
       const mLen = Math.hypot(mx, mz);
       const kbLen = Math.hypot(s.kbx, s.kbz);
       const sepLen = Math.hypot(sepX, sepZ);
+      const startX = s.mesh.position.x;
+      const startZ = s.mesh.position.z;
+      let spd = moveSpeed;
       if (mLen > 0.05) {
         mx /= mLen;
         mz /= mLen;
         const control = kbLen > 2 ? 0.35 : 1;
         // Idle villagers still sidestep out of each other; movers get a small unstick boost
-        let spd = moveSpeed;
         if (spd < 0.05 && sepLen > 0.35) spd = CIV_SEP_SPEED;
         else if (sepLen > 2.2) spd = Math.max(spd, s.speed * 0.85) * 1.12;
         s.mesh.position.x += mx * spd * dt * control;
@@ -5368,6 +5504,29 @@ export class Game {
       // Keep on the beach / promenade — not in deep water
       if (s.mesh.position.z > this.level.waterLine + 1) {
         s.mesh.position.z = this.level.waterLine + 1;
+      }
+
+      // Stuck on a rock/wall — force repath + short lateral step (same idea as invaders)
+      if (spd > 0.5 && mLen > 0.05) {
+        const moved = Math.hypot(s.mesh.position.x - startX, s.mesh.position.z - startZ);
+        const intended = spd * dt * (kbLen > 2 ? 0.35 : 1);
+        if (moved < intended * 0.12) {
+          s._stuckT = (s._stuckT || 0) + dt;
+          if (s._stuckT > 0.22) {
+            s._stuckT = 0;
+            if (s._pathState) s._pathState.until = 0;
+            const side = (i % 2 === 0) ? 1 : -1;
+            s.mesh.position.x += (-mz) * side * 0.55;
+            s.mesh.position.z += mx * side * 0.55;
+            this._pos.x = s.mesh.position.x;
+            this._pos.z = s.mesh.position.z;
+            resolveCircle(this._pos, s.r, this.level.walls);
+            s.mesh.position.x = this._pos.x;
+            s.mesh.position.z = this._pos.z;
+          }
+        } else {
+          s._stuckT = 0;
+        }
       }
 
       const waving = !fleeing && s.speechLife > 0;

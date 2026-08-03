@@ -550,8 +550,8 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   position: absolute;
   left: 0;
   bottom: 90px;
-  width: 240px;
-  padding: 10px 12px;
+  width: min(560px, calc(100vw - 16px));
+  padding: 10px 12px 12px;
   background: rgba(8, 20, 28, 0.92);
   border-right: 1px solid rgba(232, 240, 244, 0.14);
   border-top: 1px solid rgba(232, 240, 244, 0.14);
@@ -568,8 +568,20 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   color: var(--ink);
   margin-bottom: 10px;
 }
+.dbgColumns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+}
+.dbgCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
 .dbgSection {
-  margin: 12px 0 6px;
+  margin: 0 0 4px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: .18em;
@@ -582,16 +594,16 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 .dbgToggle {
   appearance: none;
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   align-items: baseline;
-  gap: 8px;
+  gap: 6px 8px;
   width: 100%;
   font: inherit;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .1em;
   text-align: left;
-  padding: 9px 12px;
+  padding: 8px 10px;
   cursor: pointer;
   color: rgba(220, 232, 238, 0.55);
   background: rgba(232, 240, 244, 0.04);
@@ -605,17 +617,23 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 .dbgToggle .dbgName {
   letter-spacing: .1em;
+  grid-column: 1;
+  grid-row: 1;
 }
 .dbgToggle .dbgNow {
+  grid-column: 2;
+  grid-row: 1;
   font-size: 10px;
   letter-spacing: .14em;
   color: rgba(200, 220, 230, 0.55);
 }
 .dbgToggle .dbgNext {
-  font-size: 10px;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: .08em;
-  color: rgba(232, 196, 106, 0.75);
+  color: rgba(232, 196, 106, 0.65);
   text-transform: lowercase;
 }
 .dbgToggle.on {
@@ -637,8 +655,16 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #dbgGatesBtn.on .dbgNow {
   color: var(--warn);
 }
+#dbgPathsBtn.on {
+  background: rgba(126, 200, 160, 0.14);
+  border-color: rgba(126, 200, 160, 0.6);
+  color: #8ed8b0;
+}
+#dbgPathsBtn.on .dbgNow {
+  color: #8ed8b0;
+}
 .dbgHint {
-  margin-top: 8px;
+  margin-top: 6px;
   font-size: 10px;
   letter-spacing: .06em;
   line-height: 1.45;
@@ -749,5 +775,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #radar { width: 110px; height: 110px; }
   #radarWrap { right: 0; bottom: 48px; padding: 6px; }
   #dbgBtn { bottom: 48px; padding: 7px 10px; font-size: 10px; }
-  #dbgMenu { bottom: 82px; width: min(240px, calc(100vw - 24px)); }
+  #dbgMenu { bottom: 82px; width: min(560px, calc(100vw - 16px)); }
+  .dbgColumns { grid-template-columns: 1fr 1fr; }
+  .dbgCol:last-child { grid-column: 1 / -1; }
 }

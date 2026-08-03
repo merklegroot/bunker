@@ -229,15 +229,15 @@ function _segAabb(x0, z0, x1, z1, minX, minZ, maxX, maxZ) {
     && t0 < t1;
 }
 
-export function hasLineOfSight(x0, z0, x1, z1, walls) {
-  return !segmentHitsWall(x0, z0, x1, z1, walls, 0.05);
+export function hasLineOfSight(x0, z0, x1, z1, walls, pad = 0.05) {
+  return !segmentHitsWall(x0, z0, x1, z1, walls, pad);
 }
 
 /**
  * Build a coarse walkability grid (inflated by clearance for agent radius).
  * Origin is map center; cell (0,0) is at world (-HALF, -HALF).
  */
-export function buildNavGrid(spec, clearance = 0.55) {
+export function buildNavGrid(spec, clearance = 0.65) {
   const { MAP, HALF, CELL, walls } = spec;
   const cols = Math.ceil(MAP / CELL);
   const rows = Math.ceil(MAP / CELL);
@@ -250,15 +250,15 @@ export function buildNavGrid(spec, clearance = 0.55) {
       let hit = circleHitsWall(wx, wz, clearance, walls);
       if (!hit) {
         const o = CELL * 0.35;
-        hit = circleHitsWall(wx + o, wz + o, clearance * 0.7, walls)
-          || circleHitsWall(wx - o, wz + o, clearance * 0.7, walls)
-          || circleHitsWall(wx + o, wz - o, clearance * 0.7, walls)
-          || circleHitsWall(wx - o, wz - o, clearance * 0.7, walls);
+        hit = circleHitsWall(wx + o, wz + o, clearance * 0.75, walls)
+          || circleHitsWall(wx - o, wz + o, clearance * 0.75, walls)
+          || circleHitsWall(wx + o, wz - o, clearance * 0.75, walls)
+          || circleHitsWall(wx - o, wz - o, clearance * 0.75, walls);
       }
       if (hit) blocked[cz * cols + cx] = 1;
     }
   }
-  return { cols, rows, cell: CELL, half: HALF, blocked };
+  return { cols, rows, cell: CELL, half: HALF, blocked, clearance };
 }
 
 export function worldToCell(nav, x, z) {
@@ -392,17 +392,21 @@ export function findPath(nav, x0, z0, x1, z1) {
 }
 
 /**
- * Steering toward a goal: straight if LOS, else follow A* waypoints.
- * Mutates `state` ({ path, i, goalX, goalZ, until }).
+ * Steering toward a goal: straight if body-clear LOS, else follow A* waypoints.
+ * Mutates `state` ({ path, i, goalX, goalZ, until, _slideSide }).
+ * `radius` inflates obstacle checks so agents path around rocks at body width.
  * Returns { x, z } unit direction (or zeros).
  */
-export function steerTo(nav, walls, x, z, tx, tz, state, time) {
+export function steerTo(nav, walls, x, z, tx, tz, state, time, radius = 0.4) {
   const dx = tx - x;
   const dz = tz - z;
   const dist = Math.hypot(dx, dz);
   if (dist < 0.15) return { x: 0, z: 0 };
 
-  if (hasLineOfSight(x, z, tx, tz, walls)) {
+  // Match body size — pencil-thin LOS lets agents wedge on rock AABBs
+  const losPad = Math.max(0.38, (radius || 0.4) * 1.05);
+
+  if (hasLineOfSight(x, z, tx, tz, walls, losPad)) {
     state.path = null;
     state.i = 0;
     return { x: dx / dist, z: dz / dist };
@@ -421,10 +425,20 @@ export function steerTo(nav, walls, x, z, tx, tz, state, time) {
   }
 
   if (!state.path || state.path.length === 0) {
-    return { x: dx / dist, z: dz / dist };
+    // No route yet — don't charge into a solid; slide along the face
+    const fx = dx / dist;
+    const fz = dz / dist;
+    const look = Math.min(0.85, dist);
+    if (segmentHitsWall(x, z, x + fx * look, z + fz * look, walls, losPad)) {
+      if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
+      const side = state._slideSide;
+      return { x: -fz * side, z: fx * side };
+    }
+    return { x: fx, z: fz };
   }
+  state._slideSide = null;
 
-  // Advance past nearby / skip-ahead if LOS to later waypoint
+  // Advance past nearby / skip-ahead if body-clear LOS to later waypoint
   while (state.i < state.path.length) {
     const w = state.path[state.i];
     if (Math.hypot(w.x - x, w.z - z) < 1.15) {
@@ -433,20 +447,38 @@ export function steerTo(nav, walls, x, z, tx, tz, state, time) {
     }
     break;
   }
-  // LOS shortcut along the path
   while (state.i + 1 < state.path.length) {
     const w2 = state.path[state.i + 1];
-    if (hasLineOfSight(x, z, w2.x, w2.z, walls)) state.i += 1;
+    if (hasLineOfSight(x, z, w2.x, w2.z, walls, losPad)) state.i += 1;
     else break;
   }
 
   if (state.i >= state.path.length) {
-    return { x: dx / dist, z: dz / dist };
+    // Path exhausted but final approach still blocked — repath next tick
+    state.until = 0;
+    const fx = dx / dist;
+    const fz = dz / dist;
+    if (segmentHitsWall(x, z, x + fx * 0.7, z + fz * 0.7, walls, losPad)) {
+      if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
+      const side = state._slideSide;
+      return { x: -fz * side, z: fx * side };
+    }
+    return { x: fx, z: fz };
   }
   const w = state.path[state.i];
   const wx = w.x - x;
   const wz = w.z - z;
   const wd = Math.hypot(wx, wz) || 1;
+  // If next waypoint is blocked at body width (coarse grid hugging), slide
+  if (segmentHitsWall(x, z, w.x, w.z, walls, losPad * 0.85)) {
+    if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
+    const side = state._slideSide;
+    // Blend slide with waypoint so we still progress around the obstacle
+    let sx = wx / wd + (-wz / wd) * side * 1.15;
+    let sz = wz / wd + (wx / wd) * side * 1.15;
+    const sl = Math.hypot(sx, sz) || 1;
+    return { x: sx / sl, z: sz / sl };
+  }
   return { x: wx / wd, z: wz / wd };
 }
 

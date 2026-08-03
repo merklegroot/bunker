@@ -81,21 +81,32 @@
     <button id="dbgBtn" type="button" title="Debug menu" aria-expanded="false">DBG</button>
     <div id="dbgMenu" class="hidden" aria-label="debug menu">
       <div class="dbgHead">DEBUG</div>
-      <button id="dbgGatesBtn" type="button" class="dbgToggle" aria-pressed="false"></button>
-      <button id="dbgSpeechBtn" type="button" class="dbgToggle on" aria-pressed="true"></button>
-      <p class="dbgHint">Closed gates block the breach. Invaders stop marching the gate and wander with normal player / tower / civilian aggro.</p>
-      <div class="dbgSection">CIV ATTACKS</div>
-      <div class="dbgToggles" role="group" aria-label="civilian attacks">
-        <button id="dbgAtkPunch" type="button" class="dbgToggle on" data-atk="punch" aria-pressed="true"></button>
-        <button id="dbgAtkBehead" type="button" class="dbgToggle on" data-atk="behead" aria-pressed="true"></button>
-        <button id="dbgAtkTear" type="button" class="dbgToggle on" data-atk="tear" aria-pressed="true"></button>
-        <button id="dbgAtkClub" type="button" class="dbgToggle on" data-atk="club" aria-pressed="true"></button>
-      </div>
-      <p class="dbgHint">Turn attacks off to isolate one. A single enabled attack commits more often.</p>
-      <div class="dbgSection">LEADER</div>
-      <div class="dbgToggles" role="group" aria-label="leader attacks">
-        <button id="dbgLeadPound" type="button" class="dbgToggle on" data-lead="pound" aria-pressed="true"></button>
-        <button id="dbgLeadCharge" type="button" class="dbgToggle on" data-lead="charge" aria-pressed="true"></button>
+      <div class="dbgColumns">
+        <div class="dbgCol">
+          <div class="dbgSection">WORLD</div>
+          <button id="dbgGatesBtn" type="button" class="dbgToggle" aria-pressed="false"></button>
+          <button id="dbgSpeechBtn" type="button" class="dbgToggle on" aria-pressed="true"></button>
+          <button id="dbgPathsBtn" type="button" class="dbgToggle" aria-pressed="false"></button>
+          <p class="dbgHint">Paths draws each unit’s walk goal and A* waypoints. Closed gates block the breach.</p>
+        </div>
+        <div class="dbgCol">
+          <div class="dbgSection">CIV ATTACKS</div>
+          <div class="dbgToggles" role="group" aria-label="civilian attacks">
+            <button id="dbgAtkPunch" type="button" class="dbgToggle on" data-atk="punch" aria-pressed="true"></button>
+            <button id="dbgAtkBehead" type="button" class="dbgToggle on" data-atk="behead" aria-pressed="true"></button>
+            <button id="dbgAtkTear" type="button" class="dbgToggle on" data-atk="tear" aria-pressed="true"></button>
+            <button id="dbgAtkClub" type="button" class="dbgToggle on" data-atk="club" aria-pressed="true"></button>
+          </div>
+          <p class="dbgHint">Turn attacks off to isolate one. A single enabled attack commits more often.</p>
+        </div>
+        <div class="dbgCol">
+          <div class="dbgSection">LEADER</div>
+          <div class="dbgToggles" role="group" aria-label="leader attacks">
+            <button id="dbgLeadPound" type="button" class="dbgToggle on" data-lead="pound" aria-pressed="true"></button>
+            <button id="dbgLeadCharge" type="button" class="dbgToggle on" data-lead="charge" aria-pressed="true"></button>
+          </div>
+          <p class="dbgHint">Green = villager · Coral = invader · Gold dots = waypoints</p>
+        </div>
       </div>
     </div>
   </div>
