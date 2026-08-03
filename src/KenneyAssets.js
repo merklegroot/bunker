@@ -10,6 +10,14 @@ const BOAT_FILES = {
   sail: 'boat-sail-a.glb',
 };
 
+/** Extra yaw so each mesh's bow points at local −Z (toward beach at group yaw 0). */
+const BOAT_BOW_YAW = {
+  rowSmall: Math.PI / 2, // 90° from the shared π default
+  rowLarge: Math.PI,
+  fishing: Math.PI,
+  sail: Math.PI,
+};
+
 /** Convert lit Kenney materials to MeshBasic so they read in our unlit scene. */
 function toUnlit(root) {
   root.traverse((o) => {
@@ -41,10 +49,9 @@ function toUnlit(root) {
 
 /**
  * Sit on y=0, center XZ, scale longest axis to targetLength.
- * Kenney watercraft bow faces local +Z in these files; game boats use local −Z as bow,
- * so we rotate π around Y.
+ * `bowYaw` aligns the mesh bow to local −Z.
  */
-function normalizeBoatTemplate(scene, targetLength = 3.1) {
+function normalizeBoatTemplate(scene, { targetLength = 3.1, bowYaw = Math.PI } = {}) {
   toUnlit(scene);
 
   let box = new THREE.Box3().setFromObject(scene);
@@ -68,8 +75,7 @@ function normalizeBoatTemplate(scene, targetLength = 3.1) {
 
   const len = Math.max(size.x, size.z) || 1;
   wrap.scale.setScalar(targetLength / len);
-  // Kenney bow faces local +Z; game treats local −Z as bow (toward beach at yaw 0)
-  wrap.rotation.y = Math.PI;
+  wrap.rotation.y = bowYaw;
 
   wrap.updateMatrixWorld(true);
   return wrap;
@@ -97,7 +103,10 @@ export class KenneyAssets {
         : key === 'sail' ? 3.4
           : key === 'fishing' ? 3.0
             : 3.2;
-      this._templates[key] = normalizeBoatTemplate(gltf.scene, targetLen);
+      this._templates[key] = normalizeBoatTemplate(gltf.scene, {
+        targetLength: targetLen,
+        bowYaw: BOAT_BOW_YAW[key] ?? Math.PI,
+      });
     }));
     this.ready = true;
     return this;
