@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const WATERCRAFT_BASE = '/assets/kenney/watercraft/';
-const NATURE_BASE = '/assets/kenney/nature/';
+// BASE_URL is './' in production so GLBs resolve inside an itch.io zip.
+const WATERCRAFT_BASE = `${import.meta.env.BASE_URL}assets/kenney/watercraft/`;
+const NATURE_BASE = `${import.meta.env.BASE_URL}assets/kenney/nature/`;
 
 const BOAT_FILES = {
   rowSmall: 'boat-row-small.glb',

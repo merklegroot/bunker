@@ -1,5 +1,6 @@
 node_modules/
 dist/
+tarajal-itch.zip
 shots/
 .DS_Store
 *.log

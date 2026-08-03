@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#1a4a6a" />
 <title>Ceuta Tower Defense — El Tarajal</title>
 <meta name="description" content="Defend El Tarajal beach on the Ceuta–Morocco border. Stop the boats. Hold the city." />
-<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-<link rel="manifest" href="/site.webmanifest" />
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="manifest" href="./site.webmanifest" />
 </head>
 <body>
   <canvas id="scene"></canvas>
@@ -33,26 +33,27 @@
           <div id="scoreWrap"><span id="scoreLabel">SCORE</span><span id="score">0</span></div>
         </div>
       </div>
-      <div id="shop" class="hidden" aria-label="shop">
-        <div class="shopHead">
-          <span class="shopTitle">SHOP</span>
-          <span class="shopGoldLabel">GOLD <b id="shopGold">0</b></span>
-        </div>
-        <button id="buyTowerBtn" type="button">
-          <span class="itemName">ARROW TOWER</span>
-          <span class="itemDesc">Carry one · place to buy more</span>
-          <span class="itemCost"><b id="towerCost">25</b> G</span>
-        </button>
-        <p class="shopHint">Carry one at a time · Place with <kbd>RMB</kbd> · Keep 2 tower-widths apart</p>
-      </div>
       <div id="simControls" class="hidden" aria-label="speed controls">
         <div class="simSpeed" role="group" aria-label="playback speed">
           <button id="btnPause" type="button" title="Pause">❚❚</button>
           <button id="btnPlay" type="button" title="Play" class="on">▶</button>
           <button id="btnFast" type="button" title="Fast forward">▶▶</button>
         </div>
-        <button id="btnNextWave" type="button" title="Start next wave">NEXT WAVE</button>
-        <button id="btnReset" type="button" title="Reset level">RESET</button>
+      </div>
+      <div id="shop" class="hidden" aria-label="shop">
+        <div class="shopMain">
+          <div class="shopHead">
+            <span class="shopTitle">SHOP</span>
+            <span class="shopGoldLabel">GOLD <b id="shopGold">0</b></span>
+          </div>
+          <button id="buyTowerBtn" type="button">
+            <span class="itemName">ARROW TOWER</span>
+            <span class="itemDesc">Carry one · place to buy more</span>
+            <span class="itemCost"><b id="towerCost">25</b> G</span>
+          </button>
+          <p class="shopHint">Carry one at a time · Place with <kbd>RMB</kbd> · Keep 2 tower-widths apart</p>
+        </div>
+        <button id="shopToggle" type="button" title="Hide shop" aria-label="Hide shop" aria-expanded="true">‹</button>
       </div>
     </div>
     <div id="prompt" aria-live="polite"></div>
@@ -73,14 +74,9 @@
         <span class="boat">BOAT</span>
       </div>
     </div>
-    <div id="hints">
-      <kbd>WASD</kbd> move
-      <kbd>SHIFT</kbd> run
-      <kbd>SCROLL</kbd> zoom
-      <kbd>RMB</kbd> tower
-      <kbd>R</kbd>/<kbd>NEXT</kbd> wave
-      <kbd>CLICK</kbd>/<kbd>SPACE</kbd> punch
-      <kbd>ESC</kbd> menu
+    <div id="bottomBar" class="hidden" aria-label="actions">
+      <button id="btnNextWave" type="button" title="Start next wave">NEXT WAVE</button>
+      <button id="btnReset" type="button" title="Reset level">RESET</button>
     </div>
     <button id="dbgBtn" type="button" title="Debug menu" aria-expanded="false">DBG</button>
     <div id="dbgMenu" class="hidden" aria-label="debug menu">

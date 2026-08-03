@@ -276,8 +276,11 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 
 #shop {
   position: static;
-  width: 220px;
-  padding: 10px 12px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  width: 248px;
+  padding: 0;
   background: rgba(8, 20, 28, 0.88);
   border: none;
   border-right: 1px solid rgba(232, 240, 244, 0.14);
@@ -286,8 +289,43 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   pointer-events: auto;
+  overflow: hidden;
+  transition: width .28s cubic-bezier(.2, .8, .2, 1);
 }
 #shop.hidden { display: none; }
+#shop.collapsed {
+  width: 28px;
+}
+.shopMain {
+  flex: 0 0 220px;
+  width: 220px;
+  padding: 10px 8px 10px 12px;
+  opacity: 1;
+  transition: opacity .18s ease;
+}
+#shop.collapsed .shopMain {
+  opacity: 0;
+  pointer-events: none;
+}
+#shopToggle {
+  flex: 0 0 28px;
+  width: 28px;
+  appearance: none;
+  border: none;
+  border-left: 1px solid rgba(232, 240, 244, 0.14);
+  background: rgba(232, 240, 244, 0.04);
+  color: rgba(200, 220, 230, 0.75);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: background .15s, color .15s;
+}
+#shopToggle:hover {
+  background: rgba(232, 240, 244, 0.1);
+  color: var(--ink);
+}
 .shopHead {
   display: flex; align-items: baseline; justify-content: space-between;
   margin-bottom: 10px; gap: 8px;
@@ -365,9 +403,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   grid-template-columns: 1fr 1fr 1fr;
   gap: 4px;
 }
-.simSpeed button,
-#btnNextWave,
-#btnReset {
+.simSpeed button {
   appearance: none;
   font: inherit;
   cursor: pointer;
@@ -375,15 +411,11 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   background: rgba(232, 240, 244, 0.06);
   color: rgba(220, 232, 238, 0.85);
   transition: background .12s, border-color .12s, color .12s;
-}
-.simSpeed button {
   padding: 8px 4px;
   font-size: 12px;
   letter-spacing: 0;
 }
-.simSpeed button:hover,
-#btnNextWave:hover:not(:disabled),
-#btnReset:hover {
+.simSpeed button:hover {
   background: rgba(232, 240, 244, 0.12);
   border-color: rgba(232, 196, 106, 0.45);
   color: var(--ink);
@@ -393,12 +425,36 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   border-color: rgba(232, 196, 106, 0.65);
   color: #f0d090;
 }
-#btnNextWave {
-  width: 100%;
-  padding: 9px 10px;
+
+#bottomBar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(8, 20, 28, 0.88);
+  border-top: 1px solid rgba(232, 240, 244, 0.14);
+  border-right: 1px solid rgba(232, 240, 244, 0.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+#bottomBar.hidden { display: none; }
+#btnNextWave,
+#btnReset {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid rgba(232, 240, 244, 0.18);
+  transition: background .12s, border-color .12s, color .12s;
+  padding: 9px 14px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .14em;
+}
+#btnNextWave {
   color: var(--sea);
   border-color: rgba(74, 160, 192, 0.4);
   background: rgba(74, 160, 192, 0.08);
@@ -416,11 +472,6 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   background: rgba(232, 240, 244, 0.04);
 }
 #btnReset {
-  width: 100%;
-  padding: 9px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .14em;
   color: #e0a090;
   border-color: rgba(192, 96, 74, 0.4);
   background: rgba(192, 96, 74, 0.08);
@@ -476,47 +527,10 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 .speech.fear::after { border-top-color: rgba(255, 236, 230, 0.96); }
 .speech.foe::after { border-top-color: rgba(40, 22, 18, 0.92); }
 
-#hints {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  transform: none;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 4px 2px;
-  max-width: none;
-  padding: 6px 14px;
-  font-size: 12px;
-  letter-spacing: .06em;
-  color: rgba(220, 232, 238, 0.82);
-  white-space: normal;
-  background: rgba(8, 20, 28, 0.88);
-  border: none;
-  border-top: 1px solid rgba(232, 240, 244, 0.14);
-  box-shadow: none;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-#hints kbd {
-  font: inherit;
-  font-weight: 700;
-  font-size: 11px;
-  letter-spacing: .1em;
-  color: #f0d090;
-  margin: 0 4px 0 10px;
-  padding: 2px 6px;
-  background: rgba(232, 196, 106, 0.1);
-  border: 1px solid rgba(232, 196, 106, 0.35);
-}
-#hints kbd:first-child { margin-left: 0; }
-
 #dbgBtn {
   position: absolute;
   left: 0;
-  bottom: 36px;
+  bottom: 52px;
   appearance: none;
   font: inherit;
   font-size: 11px;
@@ -543,7 +557,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #dbgMenu {
   position: absolute;
   left: 0;
-  bottom: 74px;
+  bottom: 90px;
   width: 240px;
   padding: 10px 12px;
   background: rgba(8, 20, 28, 0.92);
@@ -642,7 +656,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #radarWrap {
   position: absolute;
   right: 0;
-  bottom: 36px;
+  bottom: 52px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -710,17 +724,15 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #restartBtn:hover { background: rgba(232,160,64,.14); }
 
 @media (max-width: 720px) {
-  #hints {
-    font-size: 10px;
-    letter-spacing: .04em;
-    bottom: 0;
-    padding: 5px 10px;
-    gap: 2px;
+  #bottomBar {
+    padding: 6px 8px;
+    gap: 6px;
   }
-  #hints kbd {
-    font-size: 9px;
-    margin-left: 6px;
-    padding: 1px 4px;
+  #btnNextWave,
+  #btnReset {
+    padding: 8px 10px;
+    font-size: 10px;
+    letter-spacing: .1em;
   }
   #hudTop { padding: 0; }
   #hudTopRow { width: 100%; }
@@ -729,7 +741,14 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #localePlace { font-size: 12px; letter-spacing: .12em; }
   #localeRegion { font-size: 8px; letter-spacing: .1em; }
   #shop {
-    width: min(200px, calc(100vw - 130px));
+    width: min(228px, calc(100vw - 110px));
+  }
+  #shop.collapsed {
+    width: 28px;
+  }
+  .shopMain {
+    flex-basis: min(200px, calc(100vw - 138px));
+    width: min(200px, calc(100vw - 138px));
   }
   #simControls {
     width: min(200px, calc(100vw - 130px));
@@ -739,7 +758,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   }
   #score, #wave, #ammo, #gold, #breached, #enemies { font-size: 17px; }
   #radar { width: 110px; height: 110px; }
-  #radarWrap { right: 0; bottom: 34px; padding: 6px; }
-  #dbgBtn { bottom: 34px; padding: 7px 10px; font-size: 10px; }
-  #dbgMenu { bottom: 68px; width: min(240px, calc(100vw - 24px)); }
+  #radarWrap { right: 0; bottom: 48px; padding: 6px; }
+  #dbgBtn { bottom: 48px; padding: 7px 10px; font-size: 10px; }
+  #dbgMenu { bottom: 82px; width: min(240px, calc(100vw - 24px)); }
 }

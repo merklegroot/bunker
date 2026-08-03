@@ -886,9 +886,11 @@ export class Game {
       waveBannerNum: document.getElementById('waveBannerNum'),
       shop: document.getElementById('shop'),
       shopGold: document.getElementById('shopGold'),
+      shopToggle: document.getElementById('shopToggle'),
       towerCost: document.getElementById('towerCost'),
       buyTowerBtn: document.getElementById('buyTowerBtn'),
       simControls: document.getElementById('simControls'),
+      bottomBar: document.getElementById('bottomBar'),
       btnPause: document.getElementById('btnPause'),
       btnPlay: document.getElementById('btnPlay'),
       btnFast: document.getElementById('btnFast'),
@@ -914,6 +916,10 @@ export class Game {
     if (this.el.buyTowerBtn) {
       this.el.buyTowerBtn.addEventListener('click', () => this._buyTower());
     }
+    if (this.el.shopToggle) {
+      this.el.shopToggle.addEventListener('click', () => this._toggleShopCollapsed());
+    }
+    this._shopCollapsed = false;
     if (this.el.btnPause) this.el.btnPause.addEventListener('click', () => this._setTimeScale(0));
     if (this.el.btnPlay) this.el.btnPlay.addEventListener('click', () => this._setTimeScale(1));
     if (this.el.btnFast) this.el.btnFast.addEventListener('click', () => this._setTimeScale(SIM_FAST_SCALE));
@@ -1324,9 +1330,30 @@ export class Game {
     if (!this.el.shop) return;
     this.el.shop.classList.toggle('hidden', !open);
     if (this.el.simControls) this.el.simControls.classList.toggle('hidden', !open);
+    if (this.el.bottomBar) this.el.bottomBar.classList.toggle('hidden', !open);
     if (open) {
+      this._applyShopCollapsed();
       this._renderShop();
       this._renderSimControls();
+    }
+  }
+
+  _toggleShopCollapsed() {
+    if (!this.el.shop || this.el.shop.classList.contains('hidden')) return;
+    this._shopCollapsed = !this._shopCollapsed;
+    this.sfx.uiClick();
+    this._applyShopCollapsed();
+  }
+
+  _applyShopCollapsed() {
+    if (!this.el.shop) return;
+    const collapsed = !!this._shopCollapsed;
+    this.el.shop.classList.toggle('collapsed', collapsed);
+    if (this.el.shopToggle) {
+      this.el.shopToggle.textContent = collapsed ? '›' : '‹';
+      this.el.shopToggle.title = collapsed ? 'Show shop' : 'Hide shop';
+      this.el.shopToggle.setAttribute('aria-label', collapsed ? 'Show shop' : 'Hide shop');
+      this.el.shopToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     }
   }
 
