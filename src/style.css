@@ -384,24 +384,33 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
 }
 .shopHint kbd { font: inherit; color: var(--sea); margin-right: 4px; }
 
-#simControls {
-  width: 220px;
-  padding: 8px 10px 10px;
+#bottomBar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
   background: rgba(8, 20, 28, 0.88);
-  border-right: 1px solid rgba(232, 240, 244, 0.14);
-  border-bottom: 1px solid rgba(232, 240, 244, 0.14);
+  border-top: 1px solid rgba(232, 240, 244, 0.14);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   pointer-events: auto;
+}
+#bottomBar.hidden { display: none; }
+.bottomLeft {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
 }
-#simControls.hidden { display: none; }
 .simSpeed {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 4px;
+  min-width: 132px;
 }
 .simSpeed button {
   appearance: none;
@@ -411,7 +420,7 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   background: rgba(232, 240, 244, 0.06);
   color: rgba(220, 232, 238, 0.85);
   transition: background .12s, border-color .12s, color .12s;
-  padding: 8px 4px;
+  padding: 8px 10px;
   font-size: 12px;
   letter-spacing: 0;
 }
@@ -425,23 +434,6 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   border-color: rgba(232, 196, 106, 0.65);
   color: #f0d090;
 }
-
-#bottomBar {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(8, 20, 28, 0.88);
-  border-top: 1px solid rgba(232, 240, 244, 0.14);
-  border-right: 1px solid rgba(232, 240, 244, 0.14);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  pointer-events: auto;
-}
-#bottomBar.hidden { display: none; }
 #btnNextWave,
 #btnReset {
   appearance: none;
@@ -749,9 +741,6 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   .shopMain {
     flex-basis: min(200px, calc(100vw - 138px));
     width: min(200px, calc(100vw - 138px));
-  }
-  #simControls {
-    width: min(200px, calc(100vw - 130px));
   }
   #scoreWrap, #waveWrap, #ammoWrap, #goldWrap, #breachedWrap, #enemiesWrap {
     min-width: 52px; padding: 5px 10px;

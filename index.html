@@ -33,13 +33,6 @@
           <div id="scoreWrap"><span id="scoreLabel">SCORE</span><span id="score">0</span></div>
         </div>
       </div>
-      <div id="simControls" class="hidden" aria-label="speed controls">
-        <div class="simSpeed" role="group" aria-label="playback speed">
-          <button id="btnPause" type="button" title="Pause">❚❚</button>
-          <button id="btnPlay" type="button" title="Play" class="on">▶</button>
-          <button id="btnFast" type="button" title="Fast forward">▶▶</button>
-        </div>
-      </div>
       <div id="shop" class="hidden" aria-label="shop">
         <div class="shopMain">
           <div class="shopHead">
@@ -75,8 +68,15 @@
       </div>
     </div>
     <div id="bottomBar" class="hidden" aria-label="actions">
-      <button id="btnNextWave" type="button" title="Start next wave">NEXT WAVE</button>
-      <button id="btnReset" type="button" title="Reset level">RESET</button>
+      <div class="bottomLeft">
+        <button id="btnNextWave" type="button" title="Start next wave">NEXT WAVE</button>
+        <button id="btnReset" type="button" title="Reset level">RESET</button>
+      </div>
+      <div class="simSpeed" role="group" aria-label="playback speed">
+        <button id="btnPause" type="button" title="Pause">❚❚</button>
+        <button id="btnPlay" type="button" title="Play" class="on">▶</button>
+        <button id="btnFast" type="button" title="Fast forward">▶▶</button>
+      </div>
     </div>
     <button id="dbgBtn" type="button" title="Debug menu" aria-expanded="false">DBG</button>
     <div id="dbgMenu" class="hidden" aria-label="debug menu">

@@ -889,7 +889,6 @@ export class Game {
       shopToggle: document.getElementById('shopToggle'),
       towerCost: document.getElementById('towerCost'),
       buyTowerBtn: document.getElementById('buyTowerBtn'),
-      simControls: document.getElementById('simControls'),
       bottomBar: document.getElementById('bottomBar'),
       btnPause: document.getElementById('btnPause'),
       btnPlay: document.getElementById('btnPlay'),
@@ -1329,7 +1328,6 @@ export class Game {
   _setShopOpen(open) {
     if (!this.el.shop) return;
     this.el.shop.classList.toggle('hidden', !open);
-    if (this.el.simControls) this.el.simControls.classList.toggle('hidden', !open);
     if (this.el.bottomBar) this.el.bottomBar.classList.toggle('hidden', !open);
     if (open) {
       this._applyShopCollapsed();
