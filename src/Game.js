@@ -90,13 +90,8 @@ const SWIM_Y = -0.34;
 const CIV_TARGET_COUNT = 18;
 const CIV_REINFORCE_MIN = 1.2;
 const CIV_REINFORCE_MAX = 2.5;
-const TOWER_RANGE = 13;
-const TOWER_FIRE_CD = 0.9;
-const TOWER_DAMAGE = 1;
-const TOWER_HP = 28;
 const TOWER_PICKUP_RANGE = 2.4;
 const TOWER_START_COUNT = 0;
-const TOWER_SHOP_COST = 25;
 const TOWER_OWN_CAP = 6;
 const TOWER_CARRY_CAP = 1;
 /** Matches the tower base footprint; placement centers must stay ≥ 2× this apart. */
@@ -104,8 +99,50 @@ const TOWER_FOOTPRINT = 1.15;
 const TOWER_MIN_SEP = TOWER_FOOTPRINT * 2;
 const START_GOLD = 50;
 const SIM_FAST_SCALE = 2.5;
-const ARROW_SPEED = 26;
-const ARROW_LIFE = 1.4;
+
+/** Per-kind combat / shop / mesh stats. */
+const TOWER_DEFS = {
+  arrow: {
+    id: 'arrow',
+    label: 'ARROW TOWER',
+    cost: 25,
+    range: 13,
+    fireCd: 0.9,
+    damage: 1,
+    splash: 0,
+    splashDamage: 0,
+    hp: 28,
+    projSpeed: 26,
+    projLife: 1.4,
+    fromY: 2.1,
+  },
+  cannon: {
+    id: 'cannon',
+    label: 'CANNON',
+    cost: 40,
+    range: 11,
+    fireCd: 1.85,
+    damage: 3,
+    splash: 2.6,
+    splashDamage: 2,
+    hp: 36,
+    projSpeed: 17,
+    projLife: 1.55,
+    fromY: 1.55,
+  },
+};
+/** Legacy aliases used by wave heal / hurt fallbacks. */
+const TOWER_SHOP_COST = TOWER_DEFS.arrow.cost;
+const TOWER_HP = TOWER_DEFS.arrow.hp;
+const TOWER_RANGE = TOWER_DEFS.arrow.range;
+const TOWER_FIRE_CD = TOWER_DEFS.arrow.fireCd;
+const TOWER_DAMAGE = TOWER_DEFS.arrow.damage;
+const ARROW_SPEED = TOWER_DEFS.arrow.projSpeed;
+const ARROW_LIFE = TOWER_DEFS.arrow.projLife;
+
+function towerDef(kind) {
+  return TOWER_DEFS[kind] || TOWER_DEFS.arrow;
+}
 
 const WELCOME_LINES = [
   // Spanish
@@ -544,6 +581,111 @@ function createArrowTowerMesh({ ghost = false } = {}) {
   return g;
 }
 
+/** Low stone emplacement with a short-barreled field gun. */
+function createCannonTowerMesh({ ghost = false } = {}) {
+  const opacity = ghost ? 0.42 : 1;
+  const mat = (c) => makeMat(c, ghost
+    ? { transparent: true, opacity, depthWrite: false }
+    : {});
+  const g = new THREE.Group();
+  const stone = mat(0x6a6860);
+  const stoneDark = mat(0x4a4840);
+  const iron = mat(0x3a3e44);
+  const ironLight = mat(0x5a6068);
+  const wood = mat(0x6a4a28);
+  const brass = mat(0xb89850);
+
+  // Emplacement base
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.28, 1.45), stone);
+  plinth.position.y = 0.14;
+  g.add(plinth);
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.78, 0.22, 10), stoneDark);
+  ring.position.y = 0.38;
+  g.add(ring);
+
+  // Sandbags / parapet
+  for (const [x, z, ry] of [
+    [-0.6, 0.45, 0.1], [0.6, 0.4, -0.2], [-0.55, -0.5, 0.4], [0.5, -0.55, -0.35],
+    [0, 0.62, 0], [0, -0.62, 0.05],
+  ]) {
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.26, 0.32), mat(0x8a8060));
+    bag.position.set(x, 0.42, z);
+    bag.rotation.y = ry;
+    g.add(bag);
+  }
+
+  // Carriage cheeks
+  for (const sx of [-0.28, 0.28]) {
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.42, 0.7), wood);
+    cheek.position.set(sx, 0.72, 0.05);
+    g.add(cheek);
+  }
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 6), iron);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.set(0, 0.55, 0.15);
+  g.add(axle);
+  for (const sx of [-0.38, 0.38]) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 10), ironLight);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(sx, 0.55, 0.15);
+    g.add(wheel);
+  }
+
+  // Aiming group (barrel) — reused as userData.bow for yaw aiming
+  const bow = new THREE.Group();
+  bow.position.set(0, 0.85, 0);
+
+  const trunnion = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.18, 0.28), iron);
+  trunnion.position.y = 0.02;
+  bow.add(trunnion);
+
+  const breech = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.35, 8), iron);
+  breech.rotation.x = Math.PI / 2;
+  breech.position.set(0, 0.12, -0.18);
+  bow.add(breech);
+
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.95, 8), ironLight);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 0.14, 0.38);
+  bow.add(barrel);
+
+  const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.12, 0.12, 8), brass);
+  muzzle.rotation.x = Math.PI / 2;
+  muzzle.position.set(0, 0.14, 0.88);
+  bow.add(muzzle);
+
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.04), brass);
+  sight.position.set(0, 0.28, 0.05);
+  bow.add(sight);
+
+  g.add(bow);
+  g.userData.bow = bow;
+
+  // Ammo crate
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.28, 0.32), wood);
+  crate.position.set(-0.55, 0.55, -0.35);
+  crate.rotation.y = 0.35;
+  g.add(crate);
+
+  if (ghost) {
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(TOWER_FOOTPRINT * 0.55, 28),
+      makeMat(0x6b8a4a, { transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.y = 0.03;
+    g.add(pad);
+    g.userData.ghostPad = pad;
+  }
+
+  return g;
+}
+
+function createTowerMesh(kind = 'arrow', { ghost = false } = {}) {
+  if (kind === 'cannon') return createCannonTowerMesh({ ghost });
+  return createArrowTowerMesh({ ghost });
+}
+
 /**
  * Landing craft / raft. Local −Z is the bow (toward the beach when yaw = 0).
  * Prefers Kenney Watercraft Kit (CC0) when loaded; otherwise procedural mesh.
@@ -790,10 +932,12 @@ export class Game {
     this.boats = [];
     this.fx = [];
     this.arrows = [];
-    this.towers = []; // placed towers: { mesh, wall, fireCd, hp, maxHp, hitFlash }
-    this.towerStock = 0; // towers currently carried
+    this.towers = []; // placed towers: { mesh, wall, kind, fireCd, hp, maxHp, hitFlash }
+    this.towerStock = 0; // towers currently carried (0 or 1)
+    this.carryKind = null; // 'arrow' | 'cannon' while carrying
     this._carryMesh = null;
     this._towerGhost = null;
+    this._ghostKind = null;
     this._towerSepGuides = [];
     this._placeDenyFlash = 0;
     this._levelRoot = null;
@@ -897,7 +1041,9 @@ export class Game {
       shopGold: document.getElementById('shopGold'),
       shopToggle: document.getElementById('shopToggle'),
       towerCost: document.getElementById('towerCost'),
+      cannonCost: document.getElementById('cannonCost'),
       buyTowerBtn: document.getElementById('buyTowerBtn'),
+      buyCannonBtn: document.getElementById('buyCannonBtn'),
       bottomBar: document.getElementById('bottomBar'),
       btnPause: document.getElementById('btnPause'),
       btnPlay: document.getElementById('btnPlay'),
@@ -923,7 +1069,10 @@ export class Game {
     this.el.resumeBtn.addEventListener('click', () => this.resume());
     this.el.restartBtn.addEventListener('click', () => this.start());
     if (this.el.buyTowerBtn) {
-      this.el.buyTowerBtn.addEventListener('click', () => this._buyTower());
+      this.el.buyTowerBtn.addEventListener('click', () => this._buyTower('arrow'));
+    }
+    if (this.el.buyCannonBtn) {
+      this.el.buyCannonBtn.addEventListener('click', () => this._buyTower('cannon'));
     }
     if (this.el.shopToggle) {
       this.el.shopToggle.addEventListener('click', () => this._toggleShopCollapsed());
@@ -934,7 +1083,8 @@ export class Game {
     if (this.el.btnFast) this.el.btnFast.addEventListener('click', () => this._setTimeScale(SIM_FAST_SCALE));
     if (this.el.btnNextWave) this.el.btnNextWave.addEventListener('click', () => this._requestNextWave());
     if (this.el.btnReset) this.el.btnReset.addEventListener('click', () => this._resetLevel());
-    if (this.el.towerCost) this.el.towerCost.textContent = String(TOWER_SHOP_COST);
+    if (this.el.towerCost) this.el.towerCost.textContent = String(towerDef('arrow').cost);
+    if (this.el.cannonCost) this.el.cannonCost.textContent = String(towerDef('cannon').cost);
     if (this.el.dbgBtn) {
       this.el.dbgBtn.addEventListener('click', () => this._toggleDebugMenu());
     }
@@ -1508,19 +1658,25 @@ export class Game {
 
   _renderShop() {
     if (this.el.shopGold) this.el.shopGold.textContent = String(this.gold);
-    if (!this.el.buyTowerBtn) return;
     const atCap = this._towerOwnedCount() >= TOWER_OWN_CAP;
     const carrying = this.towerStock >= TOWER_CARRY_CAP;
-    const canBuy = this.gold >= TOWER_SHOP_COST && !atCap && !carrying;
-    this.el.buyTowerBtn.disabled = !canBuy;
-    if (carrying) this.el.buyTowerBtn.title = 'Place your tower before buying another';
-    else if (atCap) this.el.buyTowerBtn.title = `Tower limit (${TOWER_OWN_CAP})`;
-    else if (canBuy) this.el.buyTowerBtn.title = 'Buy arrow tower';
-    else this.el.buyTowerBtn.title = `Need ${TOWER_SHOP_COST} gold`;
+    const paintBuy = (el, kind) => {
+      if (!el) return;
+      const def = towerDef(kind);
+      const canBuy = this.gold >= def.cost && !atCap && !carrying;
+      el.disabled = !canBuy;
+      if (carrying) el.title = 'Place your tower before buying another';
+      else if (atCap) el.title = `Tower limit (${TOWER_OWN_CAP})`;
+      else if (canBuy) el.title = `Buy ${def.label.toLowerCase()}`;
+      else el.title = `Need ${def.cost} gold`;
+    };
+    paintBuy(this.el.buyTowerBtn, 'arrow');
+    paintBuy(this.el.buyCannonBtn, 'cannon');
   }
 
-  _buyTower() {
+  _buyTower(kind = 'arrow') {
     if (!this.running || this.paused || !this.playerAlive) return;
+    const def = towerDef(kind);
     if (this.towerStock >= TOWER_CARRY_CAP) {
       this.sfx.uiClick();
       return;
@@ -1529,13 +1685,15 @@ export class Game {
       this.sfx.uiClick();
       return;
     }
-    if (this.gold < TOWER_SHOP_COST) {
+    if (this.gold < def.cost) {
       this.sfx.uiClick();
       return;
     }
-    this.gold -= TOWER_SHOP_COST;
+    this.gold -= def.cost;
     this.towerStock = Math.min(TOWER_CARRY_CAP, this.towerStock + 1);
+    this.carryKind = kind;
     this._syncCarryMesh();
+    this._ensureTowerGhost();
     this._renderShop();
     this._renderHud();
     this.sfx.towerPickup();
@@ -1915,6 +2073,8 @@ export class Game {
   _clearAllTowers() {
     while (this.towers.length) this._removeTower(this.towers[0], { silent: true });
     this.towerStock = 0;
+    this.carryKind = null;
+    this._ghostKind = null;
     if (this._carryMesh) {
       if (this._carryMesh.parent) this._carryMesh.parent.remove(this._carryMesh);
       this._carryMesh = null;
@@ -1973,22 +2133,41 @@ export class Game {
   _giveTowers(count = TOWER_START_COUNT) {
     this._clearAllTowers();
     this.towerStock = count;
+    this.carryKind = count > 0 ? 'arrow' : null;
     this._syncCarryMesh();
-    this._towerGhost = createArrowTowerMesh({ ghost: true });
+    this._ensureTowerGhost();
+  }
+
+  _ensureTowerGhost() {
+    const kind = this.carryKind || 'arrow';
+    if (this._towerGhost && this._ghostKind === kind) return;
+    if (this._towerGhost) {
+      this.world.remove(this._towerGhost);
+      this._towerGhost = null;
+    }
+    this._towerGhost = createTowerMesh(kind, { ghost: true });
     this._towerGhost.visible = false;
+    this._ghostKind = kind;
     this.world.add(this._towerGhost);
   }
 
   _syncCarryMesh() {
     if (this.towerStock > 0) {
-      if (!this._carryMesh) {
-        this._carryMesh = createArrowTowerMesh();
-        this._carryMesh.scale.setScalar(0.55);
+      const kind = this.carryKind || 'arrow';
+      if (!this._carryMesh || this._carryMesh.userData.towerKind !== kind) {
+        if (this._carryMesh) {
+          this.player.remove(this._carryMesh);
+          this._carryMesh = null;
+        }
+        this._carryMesh = createTowerMesh(kind);
+        this._carryMesh.userData.towerKind = kind;
+        this._carryMesh.scale.setScalar(kind === 'cannon' ? 0.5 : 0.55);
         this._carryMesh.position.set(0.45, 1.05, -0.35);
         this._carryMesh.rotation.set(0.15, 0.4, 0.1);
         this.player.add(this._carryMesh);
       }
       this._carryMesh.visible = true;
+      this._ensureTowerGhost();
     } else if (this._carryMesh) {
       this._carryMesh.visible = false;
     }
@@ -2093,25 +2272,29 @@ export class Game {
         this._denyTowerPlace(blocked);
         return;
       }
-      const mesh = createArrowTowerMesh();
+      const kind = this.carryKind || 'arrow';
+      const def = towerDef(kind);
+      const mesh = createTowerMesh(kind);
       mesh.position.set(p.x, 0, p.z);
       mesh.rotation.y = this.player.rotation.y;
       this.world.add(mesh);
-      const hpBar = createHealthBar({ y: 3.05 });
+      const hpBar = createHealthBar({ y: kind === 'cannon' ? 2.35 : 3.05 });
       mesh.add(hpBar);
-      const w = wall(p.x, p.z, 1.05, 1.05, 1.9);
+      const w = wall(p.x, p.z, 1.05, 1.05, kind === 'cannon' ? 1.35 : 1.9);
       w._tower = true;
       this.level.walls.push(w);
       this.towers.push({
         mesh,
         wall: w,
         hpBar,
+        kind,
         fireCd: 0.35,
-        hp: TOWER_HP,
-        maxHp: TOWER_HP,
+        hp: def.hp,
+        maxHp: def.hp,
         hitFlash: 0,
       });
       this.towerStock -= 1;
+      this.carryKind = null;
       this._syncCarryMesh();
       this.nav = buildNavGrid(this.level);
       this.sfx.towerPlace();
@@ -2134,8 +2317,10 @@ export class Game {
       this.sfx.uiClick();
       return;
     }
+    const pickKind = near.kind || 'arrow';
     this._removeTower(near);
     this.towerStock = Math.min(TOWER_CARRY_CAP, this.towerStock + 1);
+    this.carryKind = pickKind;
     this._syncCarryMesh();
     this.sfx.towerPickup();
     this._renderShop();
@@ -2145,6 +2330,7 @@ export class Game {
   _updateTower(dt) {
     const losWalls = this._wallsWithoutTowers();
     for (const t of this.towers) {
+      const def = towerDef(t.kind);
       t.fireCd = Math.max(0, t.fireCd - dt);
       t.hitFlash = Math.max(0, (t.hitFlash || 0) - dt);
       if (t.hitFlash > 0) setTint(t.mesh, 0xffffff);
@@ -2155,7 +2341,7 @@ export class Game {
       const tz = t.mesh.position.z;
 
       let best = null;
-      let bestD = TOWER_RANGE;
+      let bestD = def.range;
       for (const e of this.enemies) {
         if (e.knockdownTimer > 0 || e.hp <= 0) continue;
         const d = Math.hypot(e.mesh.position.x - tx, e.mesh.position.z - tz);
@@ -2174,35 +2360,77 @@ export class Game {
       if (!best || t.fireCd > 0) continue;
 
       const aimY = best.swimming ? 0.35 : 1.05;
-      const fromY = 2.1;
+      const fromY = def.fromY;
       const dx = best.mesh.position.x - tx;
       const dy = aimY - fromY;
       const dz = best.mesh.position.z - tz;
       const len = Math.hypot(dx, dy, dz) || 1;
-      this._spawnArrow(
-        tx + (dx / len) * 0.5,
-        fromY,
-        tz + (dz / len) * 0.5,
-        (dx / len) * ARROW_SPEED,
-        (dy / len) * ARROW_SPEED,
-        (dz / len) * ARROW_SPEED,
-      );
-      t.fireCd = TOWER_FIRE_CD;
-      this.sfx.arrowFire();
+      const spd = def.projSpeed;
+      this._spawnTowerShot(t.kind, {
+        x: tx + (dx / len) * 0.55,
+        y: fromY,
+        z: tz + (dz / len) * 0.55,
+        vx: (dx / len) * spd,
+        vy: (dy / len) * spd,
+        vz: (dz / len) * spd,
+      });
+      t.fireCd = def.fireCd;
+      if (t.kind === 'cannon') this.sfx.cannonFire();
+      else this.sfx.arrowFire();
     }
   }
 
-  _spawnArrow(x, y, z, vx, vy, vz) {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.08, 0.08, 0.55),
-      makeMat(0xc4a060),
-    );
+  _spawnTowerShot(kind, { x, y, z, vx, vy, vz }) {
+    const def = towerDef(kind);
+    let mesh;
+    if (kind === 'cannon') {
+      mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 8, 6),
+        makeMat(0x2a2a28),
+      );
+    } else {
+      mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.08, 0.55),
+        makeMat(0xc4a060),
+      );
+    }
     mesh.position.set(x, y, z);
     mesh.rotation.order = 'YXZ';
     mesh.rotation.y = Math.atan2(vx, vz);
     mesh.rotation.x = Math.atan2(-vy, Math.hypot(vx, vz));
     this.world.add(mesh);
-    this.arrows.push({ mesh, vx, vy, vz, life: ARROW_LIFE });
+    this.arrows.push({
+      mesh,
+      vx,
+      vy,
+      vz,
+      life: def.projLife,
+      kind,
+      damage: def.damage,
+      splash: def.splash,
+      splashDamage: def.splashDamage,
+    });
+  }
+
+  _spawnArrow(x, y, z, vx, vy, vz) {
+    this._spawnTowerShot('arrow', { x, y, z, vx, vy, vz });
+  }
+
+  _applyTowerSplash(hx, hz, dirX, dirZ, primaryIdx, splashR, splashDmg) {
+    if (!(splashR > 0) || !(splashDmg > 0)) return;
+    for (let j = this.enemies.length - 1; j >= 0; j--) {
+      if (j === primaryIdx) continue;
+      const e = this.enemies[j];
+      if (!e || e.hp <= 0) continue;
+      const d = Math.hypot(e.mesh.position.x - hx, e.mesh.position.z - hz);
+      if (d > splashR) continue;
+      const falloff = 1 - (d / splashR) * 0.45;
+      const dmg = Math.max(1, Math.round(splashDmg * falloff));
+      this._damageEnemy(j, dmg, dirX, dirZ, MELEE_KNOCK_SPEED * 0.45, {
+        aggro: 'tower',
+      });
+    }
+    this._spark(hx, hz, 0xe8a040, 10, 0.35, 0.4);
   }
 
   _updateArrows(dt) {
@@ -2212,7 +2440,7 @@ export class Game {
       const ox = a.mesh.position.x;
       const oz = a.mesh.position.z;
       a.life -= dt;
-      a.vy -= 4 * dt;
+      a.vy -= (a.kind === 'cannon' ? 6.5 : 4) * dt;
       a.mesh.position.x += a.vx * dt;
       a.mesh.position.y += a.vy * dt;
       a.mesh.position.z += a.vz * dt;
@@ -2220,8 +2448,10 @@ export class Game {
       a.mesh.rotation.x = Math.atan2(-a.vy, Math.hypot(a.vx, a.vz));
 
       let dead = a.life <= 0 || a.mesh.position.y < 0.05;
+      let impactSplash = dead && a.kind === 'cannon';
       if (!dead && segmentHitsWall(ox, oz, a.mesh.position.x, a.mesh.position.z, walls, 0.05)) {
         dead = true;
+        impactSplash = a.kind === 'cannon';
       }
 
       if (!dead) {
@@ -2231,19 +2461,47 @@ export class Game {
           const ex = e.mesh.position.x - a.mesh.position.x;
           const ez = e.mesh.position.z - a.mesh.position.z;
           const ey = (e.swimming ? 0.3 : 1.0) - a.mesh.position.y;
-          if (ex * ex + ez * ez < (e.r + 0.25) ** 2 && Math.abs(ey) < 1.2) {
+          const hitR = e.r + (a.kind === 'cannon' ? 0.4 : 0.25);
+          if (ex * ex + ez * ez < hitR * hitR && Math.abs(ey) < 1.35) {
             const len = Math.hypot(a.vx, a.vz) || 1;
-            this._damageEnemy(j, TOWER_DAMAGE, a.vx / len, a.vz / len, MELEE_KNOCK_SPEED * 0.35, {
+            const dmg = a.damage ?? TOWER_DAMAGE;
+            this._damageEnemy(j, dmg, a.vx / len, a.vz / len, MELEE_KNOCK_SPEED * (a.kind === 'cannon' ? 0.7 : 0.35), {
               aggro: 'tower',
             });
-            this._spark(a.mesh.position.x, a.mesh.position.z, 0xc4a060, 4, 0.2, a.mesh.position.y);
+            if (a.kind === 'cannon') {
+              this._applyTowerSplash(
+                a.mesh.position.x,
+                a.mesh.position.z,
+                a.vx / len,
+                a.vz / len,
+                j,
+                a.splash,
+                a.splashDamage,
+              );
+              this._spark(a.mesh.position.x, a.mesh.position.z, 0xe8a040, 8, 0.28, a.mesh.position.y);
+            } else {
+              this._spark(a.mesh.position.x, a.mesh.position.z, 0xc4a060, 4, 0.2, a.mesh.position.y);
+            }
             dead = true;
+            impactSplash = false;
             break;
           }
         }
       }
 
       if (dead) {
+        if (impactSplash) {
+          const len = Math.hypot(a.vx, a.vz) || 1;
+          this._applyTowerSplash(
+            a.mesh.position.x,
+            a.mesh.position.z,
+            a.vx / len,
+            a.vz / len,
+            -1,
+            a.splash,
+            a.splashDamage,
+          );
+        }
         this.world.remove(a.mesh);
         this.arrows.splice(i, 1);
       }
@@ -5466,7 +5724,7 @@ export class Game {
       mx += sepX + avoidX;
       mz += sepZ + avoidZ;
 
-      const mLen = Math.hypot(mx, mz);
+      let mLen = Math.hypot(mx, mz);
       const kbLen = Math.hypot(s.kbx, s.kbz);
       const sepLen = Math.hypot(sepX, sepZ);
       const startX = s.mesh.position.x;
@@ -5475,6 +5733,35 @@ export class Game {
       if (mLen > 0.05) {
         mx /= mLen;
         mz /= mLen;
+
+        // Smooth heading so path/separation flips don't rock the body
+        if (s._smx == null) { s._smx = mx; s._smz = mz; }
+        s._smx = s._smx * 0.62 + mx * 0.38;
+        s._smz = s._smz * 0.62 + mz * 0.38;
+        let sml = Math.hypot(s._smx, s._smz) || 1;
+        mx = s._smx / sml;
+        mz = s._smz / sml;
+
+        // Reject steps that would embed the body in a rock (match obstacle size)
+        if (circleHitsWall(
+          s.mesh.position.x + mx * 0.4,
+          s.mesh.position.z + mz * 0.4,
+          s.r + 0.08,
+          this.level.walls,
+        )) {
+          if (!s._pathState) s._pathState = {};
+          if (s._pathState._slideSide == null) {
+            s._pathState._slideSide = (i % 2 === 0) ? 1 : -1;
+          }
+          const side = s._pathState._slideSide;
+          const ox = mx;
+          const oz = mz;
+          mx = -oz * side;
+          mz = ox * side;
+          s._smx = mx;
+          s._smz = mz;
+        }
+
         const control = kbLen > 2 ? 0.35 : 1;
         // Idle villagers still sidestep out of each other; movers get a small unstick boost
         if (spd < 0.05 && sepLen > 0.35) spd = CIV_SEP_SPEED;
@@ -5483,6 +5770,7 @@ export class Game {
         s.mesh.position.z += mz * spd * dt * control;
         if (spd > 0.05 && (mx || mz)) s.mesh.rotation.y = Math.atan2(mx, mz);
         moveSpeed = Math.max(moveSpeed, spd * 0.55);
+        mLen = 1;
       }
 
       if (kbLen > 0.02) {
@@ -5506,18 +5794,22 @@ export class Game {
         s.mesh.position.z = this.level.waterLine + 1;
       }
 
-      // Stuck on a rock/wall — force repath + short lateral step (same idea as invaders)
+      // Stuck on a rock/wall — repath + soft lateral step (sticky side, less slapstick)
       if (spd > 0.5 && mLen > 0.05) {
         const moved = Math.hypot(s.mesh.position.x - startX, s.mesh.position.z - startZ);
         const intended = spd * dt * (kbLen > 2 ? 0.35 : 1);
-        if (moved < intended * 0.12) {
+        if (moved < intended * 0.18) {
           s._stuckT = (s._stuckT || 0) + dt;
-          if (s._stuckT > 0.22) {
+          if (s._stuckT > 0.35) {
             s._stuckT = 0;
-            if (s._pathState) s._pathState.until = 0;
-            const side = (i % 2 === 0) ? 1 : -1;
-            s.mesh.position.x += (-mz) * side * 0.55;
-            s.mesh.position.z += mx * side * 0.55;
+            if (!s._pathState) s._pathState = {};
+            s._pathState.until = 0;
+            if (s._pathState._slideSide == null) {
+              s._pathState._slideSide = (i % 2 === 0) ? 1 : -1;
+            }
+            const side = s._pathState._slideSide;
+            s.mesh.position.x += (-mz) * side * 0.32;
+            s.mesh.position.z += mx * side * 0.32;
             this._pos.x = s.mesh.position.x;
             this._pos.z = s.mesh.position.z;
             resolveCircle(this._pos, s.r, this.level.walls);
@@ -5841,15 +6133,27 @@ export class Game {
       ctx.fill();
     }
 
-    // Arrow towers (placed)
+    // Towers (placed)
     for (const t of this.towers) {
       const x = toX(t.mesh.position.x);
       const y = toY(t.mesh.position.z);
-      ctx.fillStyle = '#d4b878';
-      ctx.fillRect(x - 3, y - 3, 6, 6);
+      ctx.fillStyle = t.kind === 'cannon' ? '#c08050' : '#d4b878';
+      if (t.kind === 'cannon') {
+        ctx.beginPath();
+        ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(x - 3, y - 3, 6, 6);
+      }
       ctx.strokeStyle = 'rgba(8, 22, 32, 0.7)';
       ctx.lineWidth = 1;
-      ctx.strokeRect(x - 3, y - 3, 6, 6);
+      if (t.kind === 'cannon') {
+        ctx.beginPath();
+        ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(x - 3, y - 3, 6, 6);
+      }
     }
 
     // Player — chevron facing movement / facing yaw

@@ -15,7 +15,8 @@ export function wall(x, z, w, d, h = 3.2) {
 export function buildLevelSpec(_wave = 1) {
   const MAP = 72;
   const HALF = MAP / 2;
-  const CELL = 2;
+  // Finer than 2u so A* corridors fit body-sized clearance around rocks
+  const CELL = 1.25;
 
   // Shore band: water z > waterLine, sand between, city z < cityLine
   const waterLine = 10;
@@ -237,28 +238,36 @@ export function hasLineOfSight(x0, z0, x1, z1, walls, pad = 0.05) {
  * Build a coarse walkability grid (inflated by clearance for agent radius).
  * Origin is map center; cell (0,0) is at world (-HALF, -HALF).
  */
-export function buildNavGrid(spec, clearance = 0.65) {
+export function buildNavGrid(spec, clearance = 0.9) {
   const { MAP, HALF, CELL, walls } = spec;
   const cols = Math.ceil(MAP / CELL);
   const rows = Math.ceil(MAP / CELL);
   const blocked = new Uint8Array(cols * rows);
+  // Extra skin beyond typical villager/invader radii so paths don't graze AABBs
+  const r = clearance;
   for (let cz = 0; cz < rows; cz++) {
     for (let cx = 0; cx < cols; cx++) {
       const wx = -HALF + (cx + 0.5) * CELL;
       const wz = -HALF + (cz + 0.5) * CELL;
-      // Sample center + corners so thin walls still block
-      let hit = circleHitsWall(wx, wz, clearance, walls);
+      let hit = circleHitsWall(wx, wz, r, walls);
       if (!hit) {
-        const o = CELL * 0.35;
-        hit = circleHitsWall(wx + o, wz + o, clearance * 0.75, walls)
-          || circleHitsWall(wx - o, wz + o, clearance * 0.75, walls)
-          || circleHitsWall(wx + o, wz - o, clearance * 0.75, walls)
-          || circleHitsWall(wx - o, wz - o, clearance * 0.75, walls);
+        const o = CELL * 0.45;
+        const cr = r * 0.95;
+        const samples = [
+          [o, o], [-o, o], [o, -o], [-o, -o],
+          [o, 0], [-o, 0], [0, o], [0, -o],
+        ];
+        for (const [ox, oz] of samples) {
+          if (circleHitsWall(wx + ox, wz + oz, cr, walls)) {
+            hit = true;
+            break;
+          }
+        }
       }
       if (hit) blocked[cz * cols + cx] = 1;
     }
   }
-  return { cols, rows, cell: CELL, half: HALF, blocked, clearance };
+  return { cols, rows, cell: CELL, half: HALF, blocked, clearance: r };
 }
 
 export function worldToCell(nav, x, z) {
@@ -286,7 +295,7 @@ function _navWalkable(nav, cx, cz) {
 export function nearestWalkable(nav, x, z) {
   let { cx, cz } = worldToCell(nav, x, z);
   if (_navWalkable(nav, cx, cz)) return { cx, cz };
-  for (let r = 1; r <= 8; r++) {
+  for (let r = 1; r <= 14; r++) {
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
@@ -299,13 +308,14 @@ export function nearestWalkable(nav, x, z) {
 
 /**
  * A* on the nav grid. Returns world-space waypoints (excluding start), or null.
+ * Waypoints sit on cell centers so agent radius fits the clearance used at bake time.
  */
 export function findPath(nav, x0, z0, x1, z1) {
   if (!nav) return null;
   const start = nearestWalkable(nav, x0, z0);
   const goal = nearestWalkable(nav, x1, z1);
   if (start.cx === goal.cx && start.cz === goal.cz) {
-    return [{ x: x1, z: z1 }];
+    return [cellToWorld(nav, goal.cx, goal.cz)];
   }
 
   const cols = nav.cols;
@@ -383,11 +393,8 @@ export function findPath(nav, x0, z0, x1, z1) {
   const path = [];
   for (let i = 1; i < cells.length; i++) {
     const c = cells[i];
-    const w = cellToWorld(nav, c % cols, (c / cols) | 0);
-    path.push(w);
+    path.push(cellToWorld(nav, c % cols, (c / cols) | 0));
   }
-  // Snap final waypoint toward actual goal
-  path.push({ x: x1, z: z1 });
   return path;
 }
 
@@ -403,13 +410,28 @@ export function steerTo(nav, walls, x, z, tx, tz, state, time, radius = 0.4) {
   const dist = Math.hypot(dx, dz);
   if (dist < 0.15) return { x: 0, z: 0 };
 
-  // Match body size — pencil-thin LOS lets agents wedge on rock AABBs
-  const losPad = Math.max(0.38, (radius || 0.4) * 1.05);
+  const bodyR = radius || 0.4;
+  // Skin past body radius — LOS/path probes must match resolveCircle collision
+  const losPad = Math.max(0.5, bodyR + 0.22);
+  const arrive = Math.max(0.7, (nav?.cell ?? 1.25) * 0.55);
+
+  const slideAlong = (fx, fz) => {
+    if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
+    const side = state._slideSide;
+    return { x: -fz * side, z: fx * side };
+  };
 
   if (hasLineOfSight(x, z, tx, tz, walls, losPad)) {
     state.path = null;
     state.i = 0;
-    return { x: dx / dist, z: dz / dist };
+    state._slideSide = null;
+    const fx = dx / dist;
+    const fz = dz / dist;
+    // Even with long LOS, reject a first step that would embed the body
+    if (circleHitsWall(x + fx * 0.4, z + fz * 0.4, bodyR + 0.06, walls)) {
+      return slideAlong(fx, fz);
+    }
+    return { x: fx, z: fz };
   }
 
   const goalMoved = !state.path
@@ -421,27 +443,26 @@ export function steerTo(nav, walls, x, z, tx, tz, state, time, radius = 0.4) {
     state.i = 0;
     state.goalX = tx;
     state.goalZ = tz;
-    state.until = time + 0.55 + Math.random() * 0.35;
+    state.until = time + 0.7 + Math.random() * 0.4;
   }
 
   if (!state.path || state.path.length === 0) {
-    // No route yet — don't charge into a solid; slide along the face
     const fx = dx / dist;
     const fz = dz / dist;
-    const look = Math.min(0.85, dist);
-    if (segmentHitsWall(x, z, x + fx * look, z + fz * look, walls, losPad)) {
-      if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
-      const side = state._slideSide;
-      return { x: -fz * side, z: fx * side };
+    const look = Math.min(0.9, dist);
+    if (
+      segmentHitsWall(x, z, x + fx * look, z + fz * look, walls, losPad)
+      || circleHitsWall(x + fx * 0.4, z + fz * 0.4, bodyR + 0.06, walls)
+    ) {
+      return slideAlong(fx, fz);
     }
     return { x: fx, z: fz };
   }
-  state._slideSide = null;
 
   // Advance past nearby / skip-ahead if body-clear LOS to later waypoint
   while (state.i < state.path.length) {
     const w = state.path[state.i];
-    if (Math.hypot(w.x - x, w.z - z) < 1.15) {
+    if (Math.hypot(w.x - x, w.z - z) < arrive) {
       state.i += 1;
       continue;
     }
@@ -454,32 +475,34 @@ export function steerTo(nav, walls, x, z, tx, tz, state, time, radius = 0.4) {
   }
 
   if (state.i >= state.path.length) {
-    // Path exhausted but final approach still blocked — repath next tick
-    state.until = 0;
+    state.until = Math.min(state.until ?? 0, time + 0.15);
     const fx = dx / dist;
     const fz = dz / dist;
-    if (segmentHitsWall(x, z, x + fx * 0.7, z + fz * 0.7, walls, losPad)) {
-      if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
-      const side = state._slideSide;
-      return { x: -fz * side, z: fx * side };
+    if (
+      segmentHitsWall(x, z, x + fx * 0.7, z + fz * 0.7, walls, losPad)
+      || circleHitsWall(x + fx * 0.4, z + fz * 0.4, bodyR + 0.06, walls)
+    ) {
+      return slideAlong(fx, fz);
     }
+    state._slideSide = null;
     return { x: fx, z: fz };
   }
+
   const w = state.path[state.i];
   const wx = w.x - x;
   const wz = w.z - z;
   const wd = Math.hypot(wx, wz) || 1;
-  // If next waypoint is blocked at body width (coarse grid hugging), slide
-  if (segmentHitsWall(x, z, w.x, w.z, walls, losPad * 0.85)) {
-    if (state._slideSide == null) state._slideSide = Math.random() < 0.5 ? 1 : -1;
-    const side = state._slideSide;
-    // Blend slide with waypoint so we still progress around the obstacle
-    let sx = wx / wd + (-wz / wd) * side * 1.15;
-    let sz = wz / wd + (wx / wd) * side * 1.15;
-    const sl = Math.hypot(sx, sz) || 1;
-    return { x: sx / sl, z: sz / sl };
+  const fx = wx / wd;
+  const fz = wz / wd;
+  // Next waypoint blocked at body width — follow the wall, don't press in
+  if (
+    segmentHitsWall(x, z, w.x, w.z, walls, losPad)
+    || circleHitsWall(x + fx * 0.45, z + fz * 0.45, bodyR + 0.08, walls)
+  ) {
+    return slideAlong(fx, fz);
   }
-  return { x: wx / wd, z: wz / wd };
+  state._slideSide = null;
+  return { x: fx, z: fz };
 }
 
 function makeMat(color, opts = {}) {

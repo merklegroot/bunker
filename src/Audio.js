@@ -255,4 +255,14 @@ export class Sfx {
   towerPickup() {
     this._tone('triangle', 300, 0.08, { gain: 0.06, freqEnd: 420, attack: 0.001, decay: 0.04 });
   }
+
+  cannonFire() {
+    this._tone('sawtooth', 90, 0.12, { gain: 0.09, freqEnd: 45, attack: 0.001, decay: 0.07 });
+    this._noiseBurst({
+      dur: 0.14,
+      gain: 0.09,
+      filterFreq: 420,
+      filterType: 'lowpass',
+    });
+  }
 }

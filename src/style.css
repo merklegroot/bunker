@@ -337,7 +337,9 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   font-size: 10px; letter-spacing: .12em; color: rgba(200, 220, 230, 0.7);
 }
 .shopGoldLabel b { color: #f0d090; font-size: 14px; letter-spacing: .04em; }
-#buyTowerBtn {
+#buyTowerBtn,
+#buyCannonBtn,
+.shopBuy {
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
@@ -352,26 +354,50 @@ canvas#scene { display: block; width: 100%; height: 100%; cursor: crosshair; }
   padding: 10px 12px;
   cursor: pointer;
   transition: background .15s, border-color .15s, opacity .15s;
+  margin-top: 6px;
 }
-#buyTowerBtn .itemName {
+#buyTowerBtn:first-of-type,
+.shopBuy:first-of-type { margin-top: 0; }
+#buyCannonBtn {
+  border-color: rgba(160, 120, 96, 0.55);
+  background: rgba(160, 110, 80, 0.1);
+}
+#buyTowerBtn .itemName,
+#buyCannonBtn .itemName,
+.shopBuy .itemName {
   grid-column: 1; grid-row: 1;
   font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--sand);
 }
-#buyTowerBtn .itemDesc {
+#buyCannonBtn .itemName { color: #e0c090; }
+#buyTowerBtn .itemDesc,
+#buyCannonBtn .itemDesc,
+.shopBuy .itemDesc {
   grid-column: 1; grid-row: 2;
   font-size: 10px; letter-spacing: .06em; color: rgba(200, 220, 230, 0.65);
 }
-#buyTowerBtn .itemCost {
+#buyTowerBtn .itemCost,
+#buyCannonBtn .itemCost,
+.shopBuy .itemCost {
   grid-column: 2; grid-row: 1 / span 2;
   align-self: center;
   font-size: 11px; letter-spacing: .1em; color: #f0d090; white-space: nowrap;
 }
-#buyTowerBtn .itemCost b { font-size: 16px; }
-#buyTowerBtn:hover:not(:disabled) {
+#buyTowerBtn .itemCost b,
+#buyCannonBtn .itemCost b,
+.shopBuy .itemCost b { font-size: 16px; }
+#buyTowerBtn:hover:not(:disabled),
+#buyCannonBtn:hover:not(:disabled),
+.shopBuy:hover:not(:disabled) {
   background: rgba(212, 184, 120, 0.16);
   border-color: rgba(232, 196, 106, 0.7);
 }
-#buyTowerBtn:disabled {
+#buyCannonBtn:hover:not(:disabled) {
+  background: rgba(180, 120, 80, 0.18);
+  border-color: rgba(220, 160, 100, 0.7);
+}
+#buyTowerBtn:disabled,
+#buyCannonBtn:disabled,
+.shopBuy:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   border-color: rgba(122, 154, 170, 0.25);
