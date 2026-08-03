@@ -66,6 +66,12 @@ const KNOCKDOWN_TIME = 1.6;
 const COMBO_WINDOW = 1.8;
 const SPANIARD_FEAR_TIME = 5.5;
 const SPANIARD_GREET_RANGE = 7.5;
+/** Personal-space pad beyond body radii; soft push when closer. */
+const CIV_SEP_PAD = 0.7;
+/** Look-ahead distance for steering around other villagers. */
+const CIV_AVOID_RANGE = 2.8;
+/** Min sidestep speed when only separating (idle stacks). */
+const CIV_SEP_SPEED = 1.75;
 const TEAR_PAIR_CIV_RANGE = 5.2;
 const TEAR_PAIR_ALLY_RANGE = 7.5;
 const PUNCH_HUNT_CIV_RANGE = 6.5;
@@ -3208,8 +3214,21 @@ export class Game {
     const shore = this.level.shoreLine;
     const city = this.level.breachZ + 6;
     for (let n = 0; n < count; n++) {
-      const x = -16 + Math.random() * 28;
-      const z = city + Math.random() * Math.max(4, shore - city - 1);
+      let x = -16 + Math.random() * 28;
+      let z = city + Math.random() * Math.max(4, shore - city - 1);
+      // Spread opens so the crowd doesn't start on top of itself
+      for (let attempt = 0; attempt < 6; attempt++) {
+        let crowded = false;
+        for (const o of this.spaniards) {
+          if (Math.hypot(o.mesh.position.x - x, o.mesh.position.z - z) < 1.35) {
+            crowded = true;
+            break;
+          }
+        }
+        if (!crowded) break;
+        x = -16 + Math.random() * 28;
+        z = city + Math.random() * Math.max(4, shore - city - 1);
+      }
       this._spawnSpaniard(x, z);
     }
   }
@@ -5187,9 +5206,23 @@ export class Game {
           const dx = greet.mesh.position.x - s.mesh.position.x;
           const dz = greet.mesh.position.z - s.mesh.position.z;
           s.mesh.rotation.y = Math.atan2(dx, dz);
-          // Drift a little toward them to welcome — but keep a polite distance
-          if (greetD > 2.8) {
-            const steer = this._steer(s, greet.mesh.position.x, greet.mesh.position.z);
+          // Fan out around the greeter so the welcoming circle doesn't collapse into a pile
+          let nearGreet = 0;
+          for (const o of this.spaniards) {
+            if (o === s || o.hp <= 0) continue;
+            if (Math.hypot(o.mesh.position.x - greet.mesh.position.x, o.mesh.position.z - greet.mesh.position.z) < 4.2) {
+              nearGreet += 1;
+            }
+          }
+          const polite = 2.9 + Math.min(2.4, nearGreet * 0.38);
+          const slot = (i % 7) - 3;
+          const lateral = slot * 0.55;
+          const nx = dx / (greetD || 1);
+          const nz = dz / (greetD || 1);
+          const greetTx = greet.mesh.position.x - nx * polite + (-nz) * lateral;
+          const greetTz = greet.mesh.position.z - nz * polite + nx * lateral;
+          if (greetD > polite) {
+            const steer = this._steer(s, greetTx, greetTz);
             mx = steer.x;
             mz = steer.z;
             moveSpeed = s.speed * 0.7;
@@ -5198,14 +5231,33 @@ export class Game {
             this._saySpaniard(s, randPick(WELCOME_LINES), false);
           }
         } else {
-          // Idle wander near home
+          // Idle wander near home — prefer quieter patches
           if (s.wanderCd <= 0) {
-            s.wanderTx = s.homeX + (Math.random() - 0.5) * 6;
-            s.wanderTz = clamp(
-              s.homeZ + (Math.random() - 0.5) * 4,
-              this.level.breachZ + 3,
-              this.level.shoreLine - 0.5,
-            );
+            let bestX = s.homeX;
+            let bestZ = s.homeZ;
+            let bestScore = -Infinity;
+            for (let t = 0; t < 5; t++) {
+              const tx = s.homeX + (Math.random() - 0.5) * 7;
+              const tz = clamp(
+                s.homeZ + (Math.random() - 0.5) * 5,
+                this.level.breachZ + 3,
+                this.level.shoreLine - 0.5,
+              );
+              let crowding = 0;
+              for (const o of this.spaniards) {
+                if (o === s || o.hp <= 0) continue;
+                const d = Math.hypot(o.mesh.position.x - tx, o.mesh.position.z - tz);
+                if (d < 2.8) crowding += 1.8 / Math.max(0.35, d);
+              }
+              const score = -crowding + Math.random() * 0.35;
+              if (score > bestScore) {
+                bestScore = score;
+                bestX = tx;
+                bestZ = tz;
+              }
+            }
+            s.wanderTx = bestX;
+            s.wanderTz = bestZ;
             s.wanderCd = 2.5 + Math.random() * 4;
           }
           const dx = s.wanderTx - s.mesh.position.x;
@@ -5221,16 +5273,49 @@ export class Game {
         }
       }
 
-      // Separation from other Spaniards and invaders
+      // Soft separation + anticipatory steering around other villagers
+      const goalLen = Math.hypot(mx, mz);
+      let sepX = 0;
+      let sepZ = 0;
+      let avoidX = 0;
+      let avoidZ = 0;
       for (const o of this.spaniards) {
-        if (o === s) continue;
+        if (o === s || o.hp <= 0) continue;
         const sx = s.mesh.position.x - o.mesh.position.x;
         const sz = s.mesh.position.z - o.mesh.position.z;
         const sd = Math.hypot(sx, sz);
-        const min = s.r + o.r + 0.25;
-        if (sd > 0 && sd < min) {
-          mx += (sx / sd) * 1.4;
-          mz += (sz / sd) * 1.4;
+        if (sd < 1e-4) {
+          const a = i * 2.3999632;
+          sepX += Math.cos(a) * 2.5;
+          sepZ += Math.sin(a) * 2.5;
+          continue;
+        }
+        const ux = sx / sd;
+        const uz = sz / sd;
+        const softMin = s.r + o.r + CIV_SEP_PAD;
+        if (sd < softMin) {
+          const t = 1 - sd / softMin;
+          const w = 1.8 + t * t * 2.8;
+          sepX += ux * w;
+          sepZ += uz * w;
+        } else if (sd < softMin + CIV_AVOID_RANGE) {
+          const headingAt = goalLen > 0.05
+            ? (mx * -ux + mz * -uz)
+            : 0.35;
+          if (headingAt > 0.12) {
+            let px = -uz;
+            let pz = ux;
+            if (mx * px + mz * pz < 0) {
+              px = -px;
+              pz = -pz;
+            }
+            const t = 1 - (sd - softMin) / CIV_AVOID_RANGE;
+            const aw = (0.35 + headingAt * 0.9) * t;
+            avoidX += px * aw;
+            avoidZ += pz * aw;
+            sepX += ux * 0.28 * t;
+            sepZ += uz * 0.28 * t;
+          }
         }
       }
       for (const e of this.enemies) {
@@ -5244,15 +5329,24 @@ export class Game {
           mz += (sz / sd) * 0.9;
         }
       }
+      mx += sepX + avoidX;
+      mz += sepZ + avoidZ;
 
       const mLen = Math.hypot(mx, mz);
       const kbLen = Math.hypot(s.kbx, s.kbz);
+      const sepLen = Math.hypot(sepX, sepZ);
       if (mLen > 0.05) {
         mx /= mLen;
         mz /= mLen;
         const control = kbLen > 2 ? 0.35 : 1;
-        s.mesh.position.x += mx * moveSpeed * dt * control;
-        s.mesh.position.z += mz * moveSpeed * dt * control;
+        // Idle villagers still sidestep out of each other; movers get a small unstick boost
+        let spd = moveSpeed;
+        if (spd < 0.05 && sepLen > 0.35) spd = CIV_SEP_SPEED;
+        else if (sepLen > 2.2) spd = Math.max(spd, s.speed * 0.85) * 1.12;
+        s.mesh.position.x += mx * spd * dt * control;
+        s.mesh.position.z += mz * spd * dt * control;
+        if (spd > 0.05 && (mx || mz)) s.mesh.rotation.y = Math.atan2(mx, mz);
+        moveSpeed = Math.max(moveSpeed, spd * 0.55);
       }
 
       if (kbLen > 0.02) {
