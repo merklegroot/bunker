@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 const WATERCRAFT_BASE = '/assets/kenney/watercraft/';
+const NATURE_BASE = '/assets/kenney/nature/';
 
 const BOAT_FILES = {
   rowSmall: 'boat-row-small.glb',
@@ -18,22 +19,49 @@ const BOAT_BOW_YAW = {
   sail: Math.PI,
 };
 
+const PALM_FILES = {
+  palm: 'tree_palm.glb',
+  palmBend: 'tree_palmBend.glb',
+  palmShort: 'tree_palmShort.glb',
+  palmTall: 'tree_palmTall.glb',
+  palmDetailed: 'tree_palmDetailedShort.glb',
+};
+
+/** Nature Kit palms ship with stylized teal/peach; recolor toward Mediterranean greens. */
+const PALM_RECOLOR = {
+  leaf: 0x2f7a3e,
+  leafAlt: 0x3d8a4a,
+  bark: 0x6a4a28,
+  barkAlt: 0x7a5530,
+};
+
 /** Convert lit Kenney materials to MeshBasic so they read in our unlit scene. */
-function toUnlit(root) {
+function toUnlit(root, { recolorPalm = false } = {}) {
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
     const srcList = Array.isArray(o.material) ? o.material : [o.material];
-    const next = srcList.map((m) => {
-      // Kenney packs use baseColorTexture → .map after GLTFLoader
+    const next = srcList.map((m, i) => {
       const map = m.map || m.emissiveMap || null;
       if (map) {
         map.colorSpace = THREE.SRGBColorSpace;
         map.needsUpdate = true;
-      } else {
-        console.warn('[Kenney] mesh missing colormap', o.name || o.uuid);
       }
+
+      let color = map ? 0xffffff : (m.color ? m.color.getHex() : 0xffffff);
+      if (recolorPalm) {
+        const name = (m.name || '').toLowerCase();
+        if (name.includes('leaf')) color = i % 2 ? PALM_RECOLOR.leafAlt : PALM_RECOLOR.leaf;
+        else if (name.includes('wood') || name.includes('bark') || name.includes('trunk')) {
+          color = PALM_RECOLOR.bark;
+        } else {
+          // Fallback by luminance of original: warm → bark, cool → leaf
+          const c = m.color || new THREE.Color(color);
+          color = c.g > c.r ? PALM_RECOLOR.leaf : PALM_RECOLOR.barkAlt;
+        }
+      }
+
       const basic = new THREE.MeshBasicMaterial({
-        color: map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xffffff)),
+        color,
         map,
         transparent: !!m.transparent,
         opacity: m.opacity ?? 1,
@@ -47,6 +75,25 @@ function toUnlit(root) {
   });
 }
 
+/** Sit on y=0, center XZ; store size metadata. */
+function normalizePiece(scene, opts = {}) {
+  toUnlit(scene, opts);
+  const box = new THREE.Box3().setFromObject(scene);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  scene.position.x -= center.x;
+  scene.position.z -= center.z;
+  scene.position.y -= box.min.y;
+
+  const wrap = new THREE.Group();
+  wrap.add(scene);
+  wrap.userData.size = size.clone();
+  wrap.userData.height = size.y;
+  wrap.userData.footprint = Math.max(size.x, size.z);
+  wrap.updateMatrixWorld(true);
+  return wrap;
+}
+
 /**
  * Sit on y=0, center XZ, scale longest axis to targetLength.
  * `bowYaw` aligns the mesh bow to local −Z.
@@ -57,7 +104,6 @@ function normalizeBoatTemplate(scene, { targetLength = 3.1, bowYaw = Math.PI } =
   let box = new THREE.Box3().setFromObject(scene);
   let size = box.getSize(new THREE.Vector3());
 
-  // Prefer length along Z
   if (size.x > size.z * 1.15) {
     scene.rotation.y += Math.PI / 2;
     scene.updateMatrixWorld(true);
@@ -81,23 +127,31 @@ function normalizeBoatTemplate(scene, { targetLength = 3.1, bowYaw = Math.PI } =
   return wrap;
 }
 
+function pickKey(keys, salt = 0) {
+  const i = Math.abs(Math.floor(salt * 17.13)) % keys.length;
+  return keys[i];
+}
+
 /**
- * Kenney Watercraft Kit (CC0) — https://kenney.nl/assets/watercraft-kit
+ * Kenney Watercraft Kit + Nature Kit palms (CC0)
+ * https://kenney.nl/assets/watercraft-kit
+ * https://kenney.nl/assets/nature-kit
  */
 export class KenneyAssets {
   constructor() {
     this.ready = false;
+    this.natureReady = false;
     this._templates = {};
+    this._palms = {};
   }
 
   async load() {
     const loader = new GLTFLoader();
-    loader.setPath(WATERCRAFT_BASE);
-    // External colormap.png lives at .../Textures/colormap.png (GLB relative URI)
-    loader.setResourcePath(WATERCRAFT_BASE);
 
-    const entries = Object.entries(BOAT_FILES);
-    await Promise.all(entries.map(async ([key, file]) => {
+    // —— Boats ——
+    loader.setPath(WATERCRAFT_BASE);
+    loader.setResourcePath(WATERCRAFT_BASE);
+    await Promise.all(Object.entries(BOAT_FILES).map(async ([key, file]) => {
       const gltf = await loader.loadAsync(file);
       const targetLen = key === 'rowSmall' ? 2.6
         : key === 'sail' ? 3.4
@@ -109,6 +163,15 @@ export class KenneyAssets {
       });
     }));
     this.ready = true;
+
+    // —— Palms only (Nature Kit) ——
+    loader.setPath(NATURE_BASE);
+    loader.setResourcePath(NATURE_BASE);
+    await Promise.all(Object.entries(PALM_FILES).map(async ([key, file]) => {
+      const gltf = await loader.loadAsync(file);
+      this._palms[key] = normalizePiece(gltf.scene, { recolorPalm: true });
+    }));
+    this.natureReady = Object.keys(this._palms).length > 0;
     return this;
   }
 
@@ -124,10 +187,8 @@ export class KenneyAssets {
     if (!template) return null;
 
     const g = new THREE.Group();
-    const model = template.clone(true);
-    g.add(model);
+    g.add(template.clone(true));
 
-    // Soft water contact disc (matches procedural boats)
     const wake = new THREE.Mesh(
       new THREE.CircleGeometry(1.25, 14),
       new THREE.MeshBasicMaterial({
@@ -143,6 +204,25 @@ export class KenneyAssets {
     g.add(wake);
 
     g.userData.kenney = key;
+    return g;
+  }
+
+  /** Place a Kenney palm at (x,z). Returns group or null. */
+  clonePalm(x, z, scale = 1) {
+    if (!this.natureReady) return null;
+    const keys = Object.keys(this._palms);
+    const key = pickKey(keys, x * 3 + z * 7);
+    const tmpl = this._palms[key];
+    if (!tmpl) return null;
+
+    const g = tmpl.clone(true);
+    const targetH = 3.2 * scale;
+    const s = targetH / (tmpl.userData.height || 1);
+    g.scale.setScalar(s);
+    g.position.set(x, 0, z);
+    g.rotation.y = (x * 1.7 + z) * 0.35;
+    g.userData.kenneyPalm = true;
+    g.userData.phase = x + z;
     return g;
   }
 }

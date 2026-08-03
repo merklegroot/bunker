@@ -809,12 +809,19 @@ export class Game {
 
     this._initThree();
     this.assets = new KenneyAssets();
-    this.assets.load().catch((err) => {
-      console.warn('[Kenney] watercraft failed to load; using procedural boats', err);
-    });
+    this.assets.load()
+      .then(() => {
+        if (this.assets.natureReady && this._levelRoot && this.level) {
+          buildLevelMeshes(this._levelRoot, this.level, { assets: this.assets });
+          this._syncGateBarrier?.();
+        }
+      })
+      .catch((err) => {
+        console.warn('[Kenney] assets failed to load; using procedural meshes', err);
+      });
     this._levelRoot = new THREE.Group();
     this.world.add(this._levelRoot);
-    buildLevelMeshes(this._levelRoot, this.level);
+    buildLevelMeshes(this._levelRoot, this.level, { assets: this.assets });
     this.fogMask = createFogMask(this.level.MAP);
     this.world.add(this.fogMask);
     this._buildPlayer();
@@ -1068,7 +1075,7 @@ export class Game {
   _loadMap() {
     this._clearEntities();
     this.level = buildLevelSpec(this.wave);
-    buildLevelMeshes(this._levelRoot, this.level);
+    buildLevelMeshes(this._levelRoot, this.level, { assets: this.assets });
     this.nav = buildNavGrid(this.level);
 
     this.world.remove(this.fogMask);

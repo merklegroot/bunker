@@ -875,6 +875,7 @@ function addBuildingDetail(root, w, color) {
 
 function addRockCluster(root, w, color) {
   addGroundShadow(root, w.x, w.z, w.w * 0.7, w.d * 0.7, 0.2);
+
   const base = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), makeMat(color));
   base.position.set(w.x, w.h / 2 - 0.02, w.z);
   base.rotation.y = (w.x + w.z) * 0.15;
@@ -906,7 +907,15 @@ function addRockCluster(root, w, color) {
   root.add(patch);
 }
 
-function addPalm(root, env, x, z, scale = 1) {
+function addPalm(root, env, x, z, scale = 1, assets = null) {
+  const kenney = assets?.clonePalm?.(x, z, scale);
+  if (kenney) {
+    addGroundShadow(root, x, z, 1.1 * scale, 0.9 * scale, 0.2);
+    root.add(kenney);
+    env.palmFronds.push(kenney);
+    return;
+  }
+
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   g.scale.setScalar(scale);
@@ -1064,8 +1073,14 @@ export function updateLevelEnv(root, time) {
     f.position.z = f.userData.baseZ + Math.sin(time * f.userData.speed * 0.65 + f.userData.phase) * 0.18;
   }
   for (const crown of env.palmFronds) {
-    crown.rotation.z = Math.sin(time * 0.7 + crown.userData.phase) * 0.05;
-    crown.rotation.x = Math.sin(time * 0.55 + crown.userData.phase * 1.3) * 0.03;
+    const phase = crown.userData.phase ?? 0;
+    if (crown.userData.kenneyPalm) {
+      crown.rotation.z = Math.sin(time * 0.7 + phase) * 0.035;
+      crown.rotation.x = Math.sin(time * 0.55 + phase * 1.3) * 0.025;
+    } else {
+      crown.rotation.z = Math.sin(time * 0.7 + phase) * 0.05;
+      crown.rotation.x = Math.sin(time * 0.55 + phase * 1.3) * 0.03;
+    }
   }
   if (env.banner) {
     env.banner.rotation.y = Math.sin(time * 2.2) * 0.08;
@@ -1096,7 +1111,7 @@ export function updateLevelEnv(root, time) {
   }
 }
 
-export function buildLevelMeshes(root, spec) {
+export function buildLevelMeshes(root, spec, { assets = null } = {}) {
   const {
     MAP, walls, floors, flora, scrub = [], destination, fenceX, waterLine, cityLine,
   } = spec;
@@ -1428,7 +1443,7 @@ export function buildLevelMeshes(root, spec) {
   // Palms + scrub
   for (const [fx, fz] of flora) {
     const scale = 0.85 + (((Math.abs(fx * 3 + fz) | 0) % 5) * 0.06);
-    addPalm(root, env, fx, fz, scale);
+    addPalm(root, env, fx, fz, scale, assets);
   }
   for (const [sx, sz] of scrub) {
     addScrub(root, sx, sz);
